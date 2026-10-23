@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import type { ServerPortal, ToolGuard } from "@pithagoras/extension-api/server";
 import { NotAnswering, type McpClient, type McpTool } from "./mcp";
 
@@ -8,27 +8,34 @@ import { NotAnswering, type McpClient, type McpTool } from "./mcp";
  * as any tool is, held by the guard to what each declares, and gone with the extension when it is switched off or
  * removed, as the portal drops what a package registered.
  *
- * A chat's pi is loaded synchronously and is not waited for, so nothing is asked of the server while a chat loads:
- * the tools are registered from what the server last listed, kept in `tools.json` in the extension's own folder. A
- * chat loaded after a portal restart, before the server answers again, has them at once. When the server answers
- * (the service's look every 30 seconds, and after an install or a start) its list is asked for again, and where it
- * changed, the open chats are loaded again once, each then having the tools as they are now.
+ * What the model is told of them is the extension's own: the list and the instructions that come with the package
+ * (`bundled`, from server/tools.json, which the release's smoke test holds the image of the same version to), as they
+ * are. The server runs code the agent writes, so nothing it says of itself goes into a chat's prompt: it is asked only
+ * to run a call. While it answers (after a start, and at the service's look every 30 seconds), what it lists is
+ * compared with the bundled list (`check`), and a difference is said in the log, once, and not taken.
+ *
+ * A chat's pi is loaded synchronously and is not waited for, so nothing is asked of Docker while a chat loads: the
+ * tools are registered while the server's container exists, as the service last found it. That is kept in a file of
+ * the extension's own folder (`installedFile`), so that a chat loaded after a portal restart, before the service has
+ * looked again, has the tools at once, and the open chats are not loaded again only because the half started.
  *
  * Each tool is named `<prefix>_<the server's name>`: off pi's own names, off the browser's rules, which a name with
- * `browser_` in it is held to, and grouped by eye. What it is told to the model is the server's own: its description,
- * its schema, and the server's MCP instructions as a guideline, which pi prints once however many tools carry it.
- * One call at a time (`sequential`): one server serves every call, on one thread. What a call returns is outside
- * content (`outside`): it comes from a scene or a project, which may have come from anywhere.
+ * `browser_` in it is held to, and grouped by eye. The instructions are a guideline, which pi prints once however many
+ * tools carry it. One call at a time (`sequential`): one server serves every call, on one thread. What a call returns
+ * is outside content (`outside`): it comes from a scene or a project, which may have come from anywhere.
  */
 
-/** What is kept of the server's list, in `tools.json`. */
-interface Cache {
+/** What the package says of the server's tools: its MCP instructions and its `tools/list`, as server/tools.json has them. */
+export interface Bundled {
   instructions: string;
   tools: McpTool[];
 }
 
 /** A tool's result as pi takes it: text and pictures in the order the server gave them. */
 type Part = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+
+/** The guard rule a tool the `acts` table does not name is held to: code from anywhere could be behind it. */
+const UNNAMED: NonNullable<ToolGuard["acts"]> = ["upload"];
 
 export interface RelayOptions {
   portal: ServerPortal;
@@ -37,31 +44,25 @@ export interface RelayOptions {
   /** The app's name, as the model is told it is not running: `Blender`. */
   app: string;
   mcp: McpClient;
+  /** The tools and the instructions that come with the package. */
+  bundled: Bundled;
   /** What each tool's call is labelled with in pi, by the server's name for it. One not listed is labelled with its name. */
   labels: Record<string, string>;
-  /** The guard rules every call of a tool is the shape of, by the server's name for it (see ToolGuard.acts). */
+  /**
+   * The guard rules every call of a tool is the shape of, by the server's name for it (see ToolGuard.acts), `[]` for
+   * none. One the table does not name is held to `upload`.
+   */
   acts: Record<string, NonNullable<ToolGuard["acts"]>>;
-  /** Where the list is kept: `tools.json` in the extension's own folder. */
-  cacheFile: string;
+  /** Where it is kept that the server's container exists: a file in the extension's own folder. */
+  installedFile: string;
 }
 
 export function relay(options: RelayOptions) {
-  const { portal, prefix, mcp, cacheFile } = options;
-  const read = (): Cache | undefined => {
-    try {
-      const kept = JSON.parse(readFileSync(cacheFile, "utf8")) as Cache;
-      return Array.isArray(kept.tools) ? kept : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  let cache = read();
-  /**
-   * Whether the server's container exists, as the service last found it. Until it has looked, a kept list says so:
-   * the list is kept while there is a server, and deleted when it is removed on the page.
-   */
-  let installed = cache !== undefined;
+  const { portal, prefix, mcp, bundled, installedFile } = options;
+  /** Whether the server's container exists, as the service last found it; until it has looked, as it found it before. */
+  let installed = existsSync(installedFile);
   const notRunning = `${options.app} is not running. The person can start it in Settings → ${options.app}.`;
+  const guideline = bundled.instructions.trim();
 
   /** A tool's result, from what the server answered: a result it marks as an error is thrown, so pi marks the call failed. */
   function partsOf(result: Awaited<ReturnType<McpClient["callTool"]>>): Part[] {
@@ -75,11 +76,10 @@ export function relay(options: RelayOptions) {
   }
 
   function register(pi: any): void {
-    if (!installed || !cache) return;
-    const guideline = cache.instructions.trim();
-    for (const tool of cache.tools) {
-      const acts = options.acts[tool.name];
-      const guard: ToolGuard = { outside: true, ...(acts ? { acts } : {}) };
+    if (!installed) return;
+    for (const tool of bundled.tools) {
+      const acts = options.acts[tool.name] ?? UNNAMED;
+      const guard: ToolGuard = { outside: true, ...(acts.length ? { acts } : {}) };
       pi.registerTool({
         name: `${prefix}_${tool.name}`,
         label: options.labels[tool.name] ?? tool.name,
@@ -102,44 +102,44 @@ export function relay(options: RelayOptions) {
     }
   }
 
-  portal.tools.offer(() => (installed && cache ? cache.tools.map((t) => ({ name: `${prefix}_${t.name}`, description: t.description ?? "" })) : []));
+  portal.tools.offer(() => (installed ? bundled.tools.map((t) => ({ name: `${prefix}_${t.name}`, description: t.description ?? "" })) : []));
   portal.chats.extend((pi) => register(pi));
 
-  const reload = () =>
-    void portal.chats.reload().catch((e) => portal.log(`could not give the open chats ${options.app}'s tools: ${(e as Error).message}`));
+  /** The difference last said in the log, so that a server that goes on listing it is not said again at each look. */
+  let said = "";
 
   return {
     /** The tools as they are registered now, by the server's names: for the routes and the tests. */
-    tools: () => (installed && cache ? cache.tools.map((t) => t.name) : []),
+    tools: () => (installed ? bundled.tools.map((t) => t.name) : []),
     /**
-     * Whether the server's container exists, as the service found it. A change hands the open chats the tools, or
-     * takes them away.
+     * Whether the server's container exists, as the service found it. A change is kept, and hands the open chats the
+     * tools, or takes them away.
      */
     setInstalled(now: boolean): void {
       if (now === installed) return;
       installed = now;
-      if (cache) reload();
+      if (now) writeFileSync(installedFile, "", { mode: 0o600 });
+      else rmSync(installedFile, { force: true });
+      void portal.chats.reload().catch((e) => portal.log(`could not give the open chats ${options.app}'s tools: ${(e as Error).message}`));
     },
     /**
-     * The server answers: its list and its instructions asked for again, and kept where they changed, which loads the
-     * open chats again once.
+     * The server answers: what it lists and its instructions, compared with the bundled ones. Where they differ (an
+     * image of another version, or code the agent ran that changed the server), the log says which tools, and the
+     * bundled ones stay what is offered and registered.
      */
-    async refresh(): Promise<void> {
-      const [info, tools] = await Promise.all([mcp.initialize(), mcp.listTools()]);
-      const next: Cache = { instructions: info.instructions, tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
-      if (cache && JSON.stringify(cache) === JSON.stringify(next)) return;
-      cache = next;
-      writeFileSync(`${cacheFile}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
-      renameSync(`${cacheFile}.tmp`, cacheFile);
-      if (installed) reload();
-    },
-    /** The server is removed: nothing is offered or registered any more, and the open chats are loaded again without the tools. */
-    forget(): void {
-      const had = installed && cache !== undefined;
-      cache = undefined;
-      installed = false;
-      rmSync(cacheFile, { force: true });
-      if (had) reload();
+    async check(): Promise<void> {
+      const [info, listed] = await Promise.all([mcp.initialize(), mcp.listTools()]);
+      const shape = (t: McpTool) => JSON.stringify({ name: t.name, description: t.description, inputSchema: t.inputSchema });
+      const own = new Map(bundled.tools.map((t) => [t.name, shape(t)]));
+      const theirs = new Map(listed.map((t) => [t.name, shape(t)]));
+      const differ = [
+        ...[...theirs.keys()].filter((name) => !own.has(name)).map((name) => `${name} is not the extension's`),
+        ...[...own.keys()].filter((name) => !theirs.has(name)).map((name) => `${name} is not listed`),
+        ...[...own.keys()].filter((name) => theirs.has(name) && theirs.get(name) !== own.get(name)).map((name) => `${name} is described otherwise`),
+        ...(info.instructions.trim() !== guideline ? ["its instructions are others"] : []),
+      ].join("; ");
+      if (differ && differ !== said) portal.log(`the ${options.app} server lists other tools than the extension's own (${differ}): the extension's are the ones offered`);
+      said = differ;
     },
   };
 }

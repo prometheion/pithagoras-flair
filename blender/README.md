@@ -44,10 +44,17 @@ The container is started again by Docker after it exits and when the host starts
 unless it was stopped on the page or in Settings → Docker, which it then stays. The extension never starts a server
 somebody stopped.
 
+It shares the portal's network namespace, which Docker joins it to as it starts. When the portal's own container starts
+again under the same id (Settings → About → Restart, a crash, `docker restart`), the portal comes up in a new namespace
+and the server would stay in the old one, out of reach: the extension finds that as the portal starts (and every 30
+seconds), by comparing the two namespaces, and starts the server again, which joins it to the portal's. What was not
+saved in the open scene is lost then, as nothing could reach the server to save it.
+
 ## The panel
 
 Each chat has a **Blender** button in its header once the server is installed; it shows a dot while one of Blender's
-tools runs in that chat. The panel holds Blender's own viewer, in the portal's language:
+tools runs in that chat. The panel holds the viewer, the extension's own page, which shows what Blender says, in the
+portal's language:
 
 - the live viewport, rendered by Blender from where you look: drag to orbit, right-drag or Shift-drag to pan, scroll to
   zoom; Solid (Workbench), Material preview and Rendered (Cycles, denoised);
@@ -76,8 +83,12 @@ The server's MCP tools, as tools of the extension's own, in every chat:
 
 They are on by default. Settings → Tools lists them under **pithagoras-blender**, where they can be switched off or made
 lazy for every chat, and each chat, agent, project or mode can switch them its own way. Their descriptions and the
-server's instructions cost about 0.8k tokens in every request. Switched off or uninstalled, the extension's tools leave
-every list and every chat.
+instructions cost about 0.8k tokens in every request. Switched off or uninstalled, the extension's tools leave every
+list and every chat.
+
+What the model is told of them comes with the extension (`server/tools.json`), not from the running server: Blender runs
+code the agent writes, so nothing the server says of itself goes into a chat's prompt. The server is only asked to run
+a call. Where what it lists differs from the extension's own (an image of another version), the portal's log says so.
 
 Don't add an MCP server named `blender` beside it: its tools would have the same names.
 
@@ -88,16 +99,27 @@ Don't add an MCP server named `blender` beside it: its tools would have the same
   request to the server carries it; no page is ever given it, and there is no default.
 - **Loopback only.** The container shares the portal's network namespace (`host` for a portal on the host,
   `container:<portal>` for a portal in Docker) and the server binds `127.0.0.1:3870`. Nothing is published.
+- **An unprivileged Blender.** Blender runs as the image's own user (`blender`, uid 10001), not root, with none of the
+  kernel's capabilities (`--cap-drop ALL`, raw sockets among them) and no way to gain more (`no-new-privileges`). It
+  can write its home, `/tmp` and `/data`; the server and Blender itself are root's.
 - **Behind the portal's sign-in.** The viewer is served through the portal at `/api/x/pithagoras-blender/ui/`, which only
-  a signed-in person reaches. The proxy drops the portal's cookie and any credential the page sent, adds the token,
-  refuses a request that changes something unless it comes from the portal's own pages, passes no cookie back, and adds
-  `frame-ancestors 'self'`, `nosniff`, and `sandbox` for the files the server serves. Everyone signed in to the portal
-  can use the panel.
-- **The tools.** What they return is outside content to the guard. `blender_execute_code` runs code with the network of
-  the portal's loopback, so after a suspected prompt injection the guard asks you before it runs, or refuses it where
-  nobody can answer. Code the agent runs in Blender can reach what listens on that loopback, as the agent's own shell
-  can.
-- The viewer escapes everything the server puts in a page: a render's path is the agent's choice.
+  a signed-in person reaches. Everyone signed in to the portal can use the panel. The proxy drops the portal's cookie
+  and any credential the page sent, adds the token, passes no cookie back, and adds `frame-ancestors 'self'` and
+  `nosniff`.
+- **Nothing of Blender's runs as the portal.** Blender runs code the agent writes, in the process that answers the
+  viewer, so that code can change what the server answers. The viewer's page is the extension's own, from its package;
+  every answer of the server's is sandboxed (`Content-Security-Policy: sandbox`), so that one opened as a page of its
+  own runs no script, in an origin of its own, with no way to the portal's API. The viewer reads the server's answers as data and
+  escapes everything it puts in the page: a render's path is the agent's choice.
+- **Changes only from the portal's pages.** Every request of the extension's that changes something (install, start,
+  stop, remove, the card, and everything the viewer asks of the server but a read) is refused unless it comes from the
+  portal's own pages: the portal's cookie is SameSite=Lax, which a page on another port or another name of the same
+  site is still sent.
+- **The tools.** What they return is outside content to the guard. `blender_execute_code` runs code on the portal's
+  loopback, so after a suspected prompt injection the guard asks you before it runs, or refuses it where nobody can
+  answer. That code can reach what listens on 127.0.0.1 where the portal runs, which for a portal on the host's network
+  (`network_mode: host`, as Pithagoras' compose file has it) is the host's own loopback, as the agent's own shell can:
+  Pithagoras' sandbox does not limit the network either. Keep services there behind a credential of their own.
 
 ## Data
 
@@ -138,25 +160,29 @@ so the image stays on disk: `docker image rm ghcr.io/thecodacus/pithagoras-blend
 
 ## Licences
 
-- The extension (its TypeScript, the viewer page, its build and its Dockerfile): Apache-2.0, as the rest of this
-  repository.
+- The extension (its TypeScript, the viewer page `src/viewer.html`, its build and its Dockerfile): Apache-2.0, as the
+  rest of this repository.
 - `server/server.py` runs inside Blender and uses its Python API, so it is licensed under the GNU General Public License,
   version 3 or any later version ([server/LICENSE](server/LICENSE)), as Blender asks of published scripts.
 - The image redistributes the official Blender 5.2.2 build (source GPL-2.0-or-later with parts under other licences,
-  binaries GPL-3.0-or-later) and Ubuntu 24.04 packages. Every release that publishes an image attaches Blender's source
-  and a list of the image's packages. [NOTICE](NOTICE) says what is in the image and where its sources are; it is in the
-  image at `/usr/share/doc/pithagoras-blender/NOTICE`.
+  binaries GPL-3.0-or-later), which links in libraries of other projects, among them FFmpeg built with x264 and x265
+  (GPL as a whole) and others under the GPL, the LGPL or the MPL, and Ubuntu 24.04 packages. Every release that
+  publishes an image attaches Blender's source, the source of each of those copyleft libraries as Blender's official
+  build fetched it, checked against the hash Blender pins (`scripts/blender-sources.sh`), and a list of the image's
+  packages. [NOTICE](NOTICE) says what is in the image and where its sources are; it is in the image at
+  `/usr/share/doc/pithagoras-blender/NOTICE`.
 
 ## Building and testing
 
 ```sh
 npm ci                     # at the repository's root
-npm run build -w blender   # web/ and server.js
+npm run build -w blender   # web/, server.js and viewer.html
 npm test -w blender        # unit tests, with Docker, the portal and the server faked
 ./scripts/pithagoras.sh    # Pithagoras v0.2.0 into .pithagoras/, for the portal-tier tests
 PITHAGORAS_DIR=$PWD/.pithagoras npm run test:portal -w blender
 docker build -f blender/server/Dockerfile -t pithagoras-blender:dev blender   # the image
 ```
 
-`server/tools.json` is what the server lists (`tools/list`); the release's smoke test compares the image with it, so a
-change to the server's tools changes the fixture, the label table in `src/labels.ts` and its German.
+`server/tools.json` is what the server lists (`tools/list`) and its MCP instructions, which the extension registers in
+every chat; the release's smoke test compares the image with it, so a change to the server's tools changes that file,
+the label and guard tables in `src/labels.ts` and the labels' German.

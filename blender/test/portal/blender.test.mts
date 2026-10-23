@@ -48,7 +48,8 @@ mkdirSync(data, { recursive: true, mode: 0o700 });
 writeFileSync(path.join(data, "settings.json"), JSON.stringify({ token: TOKEN }), { mode: 0o600 });
 
 /** The Blender server, as far as the half asks it: MCP with the token, and the viewer's own state. */
-const tools = JSON.parse(readFileSync(path.join(PACKAGE, "server/tools.json"), "utf8")).tools;
+const bundled = JSON.parse(readFileSync(path.join(PACKAGE, "server/tools.json"), "utf8"));
+const tools = bundled.tools;
 const blender = http.createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on("data", (c: Buffer) => chunks.push(c));
@@ -95,8 +96,9 @@ after(async () => {
   await daemon.close();
 });
 
+/** A request of the Settings page's: from the portal's own origin, as a browser says it. */
 const json = async (url: string, init?: RequestInit) => {
-  const answer = await fetch(url, { ...init, headers: { "content-type": "application/json", ...init?.headers } });
+  const answer = await fetch(url, { ...init, headers: { "content-type": "application/json", origin: new URL(at).origin, ...init?.headers } });
   return { status: answer.status, body: await answer.json() };
 };
 const state = async () => (await json(`${at}/state`)).body;
@@ -148,16 +150,27 @@ test("the relayed tools are listed in Settings → Tools and registered in a cha
   assert.equal(inChat.length, tools.length);
   const ping = inChat.find((t) => t.name === "blender_ping");
   assert.deepEqual(ping.guard, { outside: true });
+  assert.deepEqual(ping.promptGuidelines, [bundled.instructions], "the extension's own instructions, not what the server says");
   assert.deepEqual(inChat.find((t) => t.name === "blender_execute_code").guard, { outside: true, acts: ["upload"] });
   const result = await ping.execute("call-1", {});
   assert.deepEqual(result.content, [{ type: "text", text: "pong" }, { type: "image", data: "iVBORw0KGgo=", mimeType: "image/png" }]);
 });
 
-test("the viewer is served through the proxy with the server's token, and a stream is not this extension's", async () => {
+test("the viewer is the extension's page, its API is the server's, sandboxed, and a stream is not this extension's", async () => {
+  const page = await fetch(`${at}/ui/`);
+  assert.equal(await page.text(), readFileSync(path.join(PACKAGE, "src/viewer.html"), "utf8"));
   const answer = await fetch(`${at}/ui/api/state`);
   assert.equal(answer.status, 200);
   assert.equal((await answer.json()).path, "/api/state");
+  assert.equal(answer.headers.get("content-security-policy"), "frame-ancestors 'self', sandbox");
   assert.equal(host.extensionUpgrade("/api/x/pithagoras-blender/ui/stream"), undefined);
+});
+
+test("a change from another page of the same site is refused on the extension's routes, as the portal serves them", async () => {
+  const other = `http://${new URL(at).hostname}:9999`;
+  assert.equal((await json(`${at}/stop`, { method: "POST", headers: { origin: other } })).status, 403);
+  assert.equal((await json(`${at}/ui/api/project`, { method: "POST", headers: { origin: other }, body: '{"action":"save"}' })).status, 403);
+  assert.equal((await state()).state, "running");
 });
 
 test("a container left on the portal's old network is made again on its new one, with the volume kept", async () => {

@@ -2,15 +2,17 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { proxyUi, uiUpgrade } from "../../shared/proxy.ts";
+import { proxyUi, uiUpgrade, writesFromHere } from "../../shared/proxy.ts";
 import { fakePortal } from "./fakes.mts";
 
-/** The server's pages through the portal: what goes on to the server, what comes back, and what is refused. */
+/** The viewer through the portal: the extension's page, what goes on to the server, what comes back, and what is refused. */
+
+const PAGE = Buffer.from("<!doctype html><p>the extension's viewer</p>");
 
 /** The server behind the proxy: what it was asked, kept, and an answer as a test says. */
 async function upstream() {
   const seen: { method: string; url: string; headers: http.IncomingHttpHeaders; body: string }[] = [];
-  const answer = { status: 200, headers: { "content-type": "text/html" } as http.OutgoingHttpHeaders, body: "<p>viewer</p>" };
+  const answer = { status: 200, headers: { "content-type": "text/html" } as http.OutgoingHttpHeaders, body: "<script>fetch('/api/extensions')</script>" };
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
@@ -40,7 +42,9 @@ async function upstream() {
 async function setup() {
   const up = await upstream();
   const fake = fakePortal();
-  const options = { port: () => up.port, token: () => "tok", notAnswering: "Blender antwortet nicht. / Blender is not answering." };
+  const options = { port: () => up.port, token: () => "tok", page: PAGE, notAnswering: "Blender antwortet nicht. / Blender is not answering." };
+  fake.portal.router.use(writesFromHere);
+  fake.portal.router.post("/stop", (_req: unknown, res: { json: (body: unknown) => void }) => res.json({ ok: true }));
   fake.portal.router.use("/ui", proxyUi(options));
   fake.portal.http.upgrade(uiUpgrade(options));
   const at = await fake.serve();
@@ -61,11 +65,22 @@ test("what goes on to the server: no cookie, credential, origin or referer of th
   assert.equal(asked.headers["x-kept"], "yes");
 });
 
-test("what comes back may be framed only by the portal's pages, is taken as its type, sets no cookie, and a file runs nothing", async () => {
+test("/ui/ is the extension's own page, never the server's, framed only by the portal's pages", async () => {
   const { up, at } = await setup();
-  let answer = await fetch(`${at}/ui/`);
-  assert.equal(await answer.text(), "<p>viewer</p>");
+  const answer = await fetch(`${at}/ui/?lang=de`);
+  assert.equal(answer.status, 200);
+  assert.equal(await answer.text(), PAGE.toString("utf8"));
+  assert.equal(answer.headers.get("content-type"), "text/html; charset=utf-8");
   assert.equal(answer.headers.get("content-security-policy"), "frame-ancestors 'self'");
+  assert.equal(answer.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(up.seen.length, 0, "the server is not asked for it");
+});
+
+test("nothing the server answers runs on the portal's origin, is taken as another type, or sets a cookie", async () => {
+  const { up, at } = await setup();
+  let answer = await fetch(`${at}/ui/api/state`);
+  assert.equal(await answer.text(), "<script>fetch('/api/extensions')</script>");
+  assert.equal(answer.headers.get("content-security-policy"), "frame-ancestors 'self', sandbox", "a page the server makes runs in an origin of its own");
   assert.equal(answer.headers.get("x-content-type-options"), "nosniff");
   up.answer.headers = { "content-type": "image/png", "content-security-policy": "default-src 'self'", "set-cookie": "portal_session=forged; Path=/" };
   answer = await fetch(`${at}/ui/files/renders/a.png`);
@@ -73,7 +88,7 @@ test("what comes back may be framed only by the portal's pages, is taken as its 
   assert.equal(answer.headers.get("set-cookie"), null, "no cookie is set on the portal's origin");
 });
 
-test("a change from another site is refused; one from the portal's own pages goes through, with its body", async () => {
+test("a change from another site is refused, under /ui and on the extension's own routes; one from the portal's own pages goes through, with its body", async () => {
   const { up, at, host } = await setup();
   const post = (headers: Record<string, string>) => fetch(`${at}/ui/api/project`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: '{"action":"save"}' });
   assert.equal((await post({ origin: "http://evil.example" })).status, 403);
@@ -86,6 +101,12 @@ test("a change from another site is refused; one from the portal's own pages goe
   assert.equal((await post({ origin: "https://portal.example", "x-forwarded-host": "portal.example, inner" })).status, 200, "behind a reverse proxy");
   assert.equal(up.seen.length, before + 3);
   assert.equal(up.seen.at(-1)!.body, '{"action":"save"}');
+  // The extension's own routes, as a form on another port of the same machine posts to them.
+  const stop = (headers: Record<string, string>) => fetch(`${at}/stop`, { method: "POST", headers });
+  assert.equal((await stop({ origin: `http://${host.replace(/:\d+$/, ":9999")}` })).status, 403);
+  assert.equal((await stop({ "sec-fetch-site": "same-site" })).status, 403);
+  assert.equal((await stop({ origin: `http://${host}` })).status, 200);
+  assert.equal((await fetch(`${at}/ui/api/state`, { headers: { origin: "http://evil.example" } })).status, 200, "a read is let through");
 });
 
 test("/ui without its slash goes to ui/, with its query", async () => {
@@ -97,9 +118,9 @@ test("/ui without its slash goes to ui/, with its query", async () => {
 
 test("a server that does not answer is said to", async () => {
   const fake = fakePortal();
-  fake.portal.router.use("/ui", proxyUi({ port: () => 1, token: () => "tok", notAnswering: "Blender antwortet nicht. / Blender is not answering." }));
+  fake.portal.router.use("/ui", proxyUi({ port: () => 1, token: () => "tok", page: PAGE, notAnswering: "Blender antwortet nicht. / Blender is not answering." }));
   const at = await fake.serve();
-  const answer = await fetch(`${at}/ui/`);
+  const answer = await fetch(`${at}/ui/api/state`);
   assert.equal(answer.status, 502);
   assert.equal(await answer.text(), "Blender antwortet nicht. / Blender is not answering.");
 });

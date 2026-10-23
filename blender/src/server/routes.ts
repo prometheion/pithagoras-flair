@@ -12,7 +12,8 @@ import type { Service } from "../../../shared/service";
  *   POST /install, /start, /stop
  *   POST /uninstall   {removeData}: the container, and with removeData the volume with the projects
  *
- * The server's own pages are at /ui/ (shared/proxy.ts, mounted in server.ts).
+ * The viewer is at /ui/ (shared/proxy.ts, mounted in server.ts). A request that is not a read, here or there, is
+ * refused unless it comes from the portal's own pages (`writesFromHere`, mounted before both).
  */
 
 /** What the server says of its renderer, from its own state (GET /api/state): nothing while it does not answer. */

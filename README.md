@@ -18,4 +18,4 @@ An extension here is built like any Pithagoras extension, against [`@pithagoras/
 
 ## License
 
-Apache-2.0, as Pithagoras.
+Apache-2.0, as Pithagoras, except `blender/server/server.py`, which runs inside Blender and is GPL-3.0-or-later ([blender/server/LICENSE](blender/server/LICENSE)). Each extension's README and NOTICE say under which licences what its image redistributes is, and where their sources are.

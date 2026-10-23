@@ -25,6 +25,12 @@ const NVOPTIX = "/usr/share/nvidia/nvoptix.bin";
  * that is not there would refuse the create. Without them Blender denoises with OpenImageDenoise. The network is the
  * portal's loopback, as Voice's and Understory's are, and the server binds 127.0.0.1 alone. No memory limit, as
  * Blender's needs follow the scene.
+ *
+ * Blender runs the Python the agent writes, so it is held to what Pithagoras' own Docker tools ask of a container the
+ * agent runs: the image's own user (`blender`, not root), none of the kernel's capabilities (`CapDrop: ALL`, raw
+ * sockets among them), and no way to gain more (`no-new-privileges`). Its network is the one exception: the portal's
+ * loopback, so the code it runs reaches what listens there, as the agent's own shell does. The GPU needs none of the
+ * capabilities: the container toolkit hands the card's devices to the container as it starts.
  */
 export function blenderSpec(plan: Plan, port: number, volume: string, image: string): ContainerSpec {
   return {
@@ -33,8 +39,10 @@ export function blenderSpec(plan: Plan, port: number, volume: string, image: str
     Env: [`BLENDER_SERVER_TOKEN=${plan.token}`, `BLENDER_SERVER_PORT=${port}`, "NVIDIA_DRIVER_CAPABILITIES=all"],
     HostConfig: {
       NetworkMode: plan.network,
+      CapDrop: ["ALL"],
+      SecurityOpt: ["no-new-privileges:true"],
       Binds: [`${volume}:/data`],
-      Mounts: plan.optix === "host" ?[{ Type: "bind", Source: NVOPTIX, Target: NVOPTIX, ReadOnly: true }] : [],
+      Mounts: plan.optix === "host" ? [{ Type: "bind", Source: NVOPTIX, Target: NVOPTIX, ReadOnly: true }] : [],
       DeviceRequests: plan.card ? [{ Driver: "nvidia", DeviceIDs: [plan.card.uuid], Capabilities: [["gpu"]] }] : [],
       LogConfig: { Type: "json-file", Config: { "max-size": "10m", "max-file": "2" } },
     },

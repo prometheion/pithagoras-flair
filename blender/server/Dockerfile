@@ -1,5 +1,5 @@
-# The Blender server of the pithagoras-blender extension: headless Blender with its viewer and MCP on one loopback
-# port, for hosts with Docker, and for the GPU the NVIDIA container toolkit. Built from the extension's folder
+# The Blender server of the pithagoras-blender extension: headless Blender with its viewer's API and MCP on one
+# loopback port, for hosts with Docker, and for the GPU the NVIDIA container toolkit. Built from the extension's folder
 # (`docker build -f server/Dockerfile .`), so that its NOTICE goes into the image; .dockerignore lets nothing else in.
 FROM ubuntu:24.04
 
@@ -30,19 +30,24 @@ RUN set -eux; \
 ARG VERSION=0.1.0
 LABEL org.opencontainers.image.source="https://github.com/thecodacus/pithagoras-flair" \
       org.opencontainers.image.title="pithagoras-blender" \
-      org.opencontainers.image.description="Headless Blender with a browser viewer and MCP, for the pithagoras-blender extension of Pithagoras" \
+      org.opencontainers.image.description="Headless Blender with MCP and the API of its browser viewer, for the pithagoras-blender extension of Pithagoras" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="GPL-3.0-or-later"
 
-COPY server/server.py server/viewer.html /opt/blender-server/
-# What the image holds, under which licences, and where their sources are: the extension's NOTICE, the Apache licence of
-# the viewer page, and the GPL of server.py.
+# Blender runs as a user of its own, not root: it runs the Python the agent writes. What it may write is its home,
+# /tmp and /data; the server and Blender itself are root's, so that code it runs cannot change them on disk.
+RUN useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin blender \
+    && mkdir /data && chown blender:blender /data
+
+COPY server/server.py /opt/blender-server/
+# What the image holds, under which licences, and where their sources are: the extension's NOTICE and the GPL of
+# server.py.
 COPY NOTICE /usr/share/doc/pithagoras-blender/NOTICE
-COPY LICENSE /usr/share/doc/pithagoras-blender/LICENSE.Apache-2.0
 COPY server/LICENSE /usr/share/doc/pithagoras-blender/LICENSE.GPL-3.0
 
-# Scenes, renders and exports live here; the extension mounts its volume over it. Nothing is published: the server
-# binds the portal's loopback, which the container shares.
+# Scenes, renders and exports live here; the extension mounts its volume over it, which takes the folder's owner when
+# Docker makes it. Nothing is published: the server binds the portal's loopback, which the container shares.
 WORKDIR /data
+USER blender
 
 ENTRYPOINT ["blender", "-b", "--factory-startup", "--python", "/opt/blender-server/server.py", "--"]

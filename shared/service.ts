@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readlinkSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ServerPortal } from "@pithagoras/extension-api/server";
 import type { ContainerSpec, Docker } from "./docker-api";
@@ -24,6 +25,13 @@ import type { Store } from "./store";
  * image after an update, another card) or whose network is not the portal's loopback as it is now (the portal's own
  * container was made again) is stale. A running one is made again at once, the volume kept; a stopped one at its next
  * Start. That is Voice's rule, with a hash for Voice's recipe label.
+ *
+ * A network that reads the same can still be the wrong one. Docker joins a container made with `container:<portal>`
+ * to the portal's network namespace as it starts it, and leaves it there: when the portal's container starts again
+ * under the same id (Settings → About → Restart, a crash, `docker restart`), the portal comes up in a namespace of its
+ * own, and the server stays in the old one, where nothing of the portal's reaches it. So a server that Docker says is
+ * running and that does not answer has the namespace it is in compared with the portal's (`strayed`), and is started
+ * again where they differ, which joins it to the portal's as it is now (`rejoin`).
  */
 
 /** The names a service goes by, each one the portal's environment can change: see `namesFrom`. */
@@ -136,12 +144,18 @@ export interface ServiceOptions {
   spec: (plan: Plan) => ContainerSpec;
   /** Runs the GPU probe; the tests give their own. */
   probe?: (docker: Docker, name: string, pinned?: string) => Promise<Probed>;
+  /** The portal's own network namespace, as Linux names it (`net:[…]`); the tests give their own. */
+  netns?: () => string;
 }
+
+/** What names the network namespace a process is in, the same in every process in it. */
+const NETNS = "/proc/self/ns/net";
 
 export function service(options: ServiceOptions) {
   const { portal, app, names, store, relay, mcp } = options;
   const docker = options.docker;
   const runProbe = options.probe ?? probe;
+  const portalNetns = options.netns ?? (() => readlinkSync(NETNS));
   let pending = false;
   let downloading = false;
   let progress = "";
@@ -249,11 +263,14 @@ export function service(options: ServiceOptions) {
     return { ...base, state, error: problem, log, ...(detail && heldCard(detail) ? { card: heldCard(detail) } : {}), ...(detail?.Config?.Image ? { image: detail.Config.Image } : {}), retrying: retried };
   }
 
-  /** After a start: waits for the server to answer, then asks for its tools. The look every 30 seconds does the same. */
+  /**
+   * After a start: waits for the server to answer, then compares what it lists with the tools the extension offers,
+   * which says in the log where they differ.
+   */
   async function whenAnswering(): Promise<void> {
     const until = Date.now() + ANSWER_WITHIN_MS;
     while (Date.now() < until) {
-      if (await mcp.ping(AbortSignal.timeout(3000))) return relay.refresh();
+      if (await mcp.ping(AbortSignal.timeout(3000))) return relay.check();
       // Not a wait that keeps the portal's process from ending.
       await delay(1000, undefined, { ref: false });
     }
@@ -296,7 +313,7 @@ export function service(options: ServiceOptions) {
           await d.containers.start(names.container);
         }
         relay.setInstalled(true);
-        void whenAnswering().catch((e) => portal.log(`could not read ${app}'s tools: ${(e as Error).message}`));
+        void whenAnswering().catch((e) => portal.log(`could not compare ${app}'s tools: ${(e as Error).message}`));
       } catch (e) {
         error = (e as Error).message;
       } finally {
@@ -327,7 +344,7 @@ export function service(options: ServiceOptions) {
       const detail = await own();
       if (detail === "foreign") throw new Error(`A container named ${names.container} is there that is not this extension's. Rename or remove it first.`);
       if (detail) await d.containers.remove(names.container);
-      relay.forget();
+      relay.setInstalled(false);
       if (removeData) await d.volumes.remove(names.volume);
     } finally {
       pending = false;
@@ -335,13 +352,48 @@ export function service(options: ServiceOptions) {
   }
 
   /**
+   * Is the server's process in another network namespace than the portal's? Read in the container, which has to be
+   * running: the namespace's name is the same in every process in it.
+   */
+  async function strayed(): Promise<boolean> {
+    const read = await docker().containers.exec(names.container, ["readlink", NETNS], { timeoutMs: 10_000 });
+    return read.exitCode === 0 && read.output.trim() !== portalNetns();
+  }
+
+  /**
+   * The server started again, the container and the volume kept, so that Docker joins it to the portal's namespace as
+   * it is now. What was not saved in the open scene is lost with the process, as nothing could reach it to save it.
+   */
+  async function rejoin(): Promise<void> {
+    pending = true;
+    error = "";
+    portal.log(`the ${app} container is in a network namespace the portal is no longer in (the portal's container started again): starting it again`);
+    try {
+      await docker().containers.stop(names.container);
+      await docker().containers.start(names.container);
+    } catch (e) {
+      error = (e as Error).message;
+      return;
+    } finally {
+      pending = false;
+    }
+    void whenAnswering().catch((e) => portal.log(`could not compare ${app}'s tools: ${(e as Error).message}`));
+  }
+
+  /**
    * The look every 30 seconds, and once as the half starts: a running container that is stale is made again (in
-   * `status`), and while the server answers, its tools are asked for again, which reloads the open chats only where
-   * they changed. A container somebody stopped is never started here.
+   * `status`); while the server answers, what it lists is compared with the extension's tools, which the log says
+   * where they differ (code the agent ran can change the server); and one Docker says is running that does not answer
+   * is started again where it is in a namespace the portal is no longer in. A container somebody stopped is never
+   * started here.
    */
   async function maintain(): Promise<void> {
     const now = await status();
-    if (now.state === "running") await relay.refresh();
+    if (now.state === "running") return relay.check();
+    // Only these can be running to Docker without answering: one starting, and one Docker starts again after it exited.
+    if (now.busy || (now.state !== "starting" && now.state !== "failed")) return;
+    const detail = await own();
+    if (detail && detail !== "foreign" && detail.State?.Running && !detail.State.Restarting && (await strayed())) await rejoin();
   }
 
   /** The cards as the probe finds them now, and which the server is, or would be, on. */

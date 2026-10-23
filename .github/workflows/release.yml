@@ -7,7 +7,10 @@
 #    personal account starts private: switch it to public once, in the package's settings on GitHub, or no portal can
 #    pull it.
 # 4. The GitHub release is made with what the GPL asks to go with the image: Blender's source, checked against
-#    blender.org's published sum, and the list of the image's Ubuntu packages (their sources are in Ubuntu's archive).
+#    blender.org's published sum; the sources of the copyleft libraries the official Linux build links in (FFmpeg,
+#    built with x264 and x265, and the others under the GPL, the LGPL or the MPL: scripts/blender-sources.sh), each
+#    checked against the hash Blender's source pins; and the list of the image's Ubuntu packages (their sources are in
+#    Ubuntu's archive).
 # 5. The package is published to npm (secret NPM_TOKEN), last, so that a version on npm never names an image that is
 #    not there.
 name: Release
@@ -54,13 +57,14 @@ jobs:
           curl -fsSLO "https://download.blender.org/source/blender-$BLENDER_VERSION.tar.xz"
           curl -fsSLO "https://download.blender.org/source/blender-$BLENDER_VERSION.tar.xz.md5sum"
           md5sum -c "blender-$BLENDER_VERSION.tar.xz.md5sum"
+          ../scripts/blender-sources.sh "$BLENDER_VERSION" .
           docker run --rm --entrypoint dpkg-query "$IMAGE:$VERSION" -W -f '${Package}\t${Version}\t${Architecture}\n' > "pithagoras-blender-$VERSION-packages.txt"
           cp ../blender/NOTICE "pithagoras-blender-$VERSION-NOTICE.txt"
       - name: GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "Blender $VERSION" --notes "pithagoras-blender $VERSION: the extension (npm:pithagoras-blender@$VERSION) and its image ($IMAGE:$VERSION). Blender's source and the image's package list are attached, as its NOTICE says." sources/*
+          gh release create "$GITHUB_REF_NAME" --title "Blender $VERSION" --notes "pithagoras-blender $VERSION: the extension (npm:pithagoras-blender@$VERSION) and its image ($IMAGE:$VERSION). Attached: Blender's source, the sources of the copyleft libraries its official Linux build links in (listed in blender-$BLENDER_VERSION-libraries.txt), and the image's package list, as its NOTICE says." sources/*
       - run: npm ci
       - name: Publish to npm
         run: npm publish -w blender --access public
