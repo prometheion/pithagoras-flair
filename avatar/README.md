@@ -70,7 +70,7 @@ npx playwright install chromium
 npm run test:browser # the extension on a test page of its own, in Chromium with WebGL drawn in software
 ```
 
-The tests make their VRM models in code (`test/tiny-vrm.ts`). The browser tests also draw two sample models, fetched at test time into `test/.models/` from the commits they are pinned to and checked by their sha256: pixiv's `VRM1_Constraint_Twist_Sample.vrm` and VirtualCast's Seed-san, both under the [VRM Public License 1.0](https://vrm.dev/licenses/1.0/). Neither is part of this repository.
+The tests make their VRM models in code (`test/tiny-vrm.ts`). The browser tests' page is served with the portal's own Content-Security-Policy, which the extension draws under in a portal. They also draw two sample models, fetched at test time into `test/.models/` from the commits they are pinned to and checked by their sha256: pixiv's `VRM1_Constraint_Twist_Sample.vrm` and VirtualCast's Seed-san, both under the [VRM Public License 1.0](https://vrm.dev/licenses/1.0/). Neither is part of this repository.
 
 Until `@pithagoras/extension-api` 0.2.1 is published, this package builds against 0.2.0, which does not declare the `voice.avatar` slot: `src/voice-avatar-slot.d.ts` declares it as 0.2.1 does, and is deleted once 0.2.1 is out. Only the types come from the package; the slot itself is the portal's, so the extension still needs a portal of 0.2.1 or later.
 
