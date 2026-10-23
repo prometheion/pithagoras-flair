@@ -65,11 +65,15 @@ const orbShown = async (page: Page) => {
 /** The list again, as the page asks for it whenever it is shown. */
 const refresh = (page: Page) => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
-/** How many pixels of the frame the model covers: read in the frame after three.js has drawn it, before it is shown. */
+/**
+ * How many pixels of the frame the model covers, and how wide and tall what it covers is: read in the frame after
+ * three.js has drawn it, before it is shown.
+ */
+type Covered = { pixels: number; width: number; height: number };
 const covered = (page: Page) =>
   page.evaluate(
     () =>
-      new Promise<number>((resolve) =>
+      new Promise<Covered>((resolve) =>
         requestAnimationFrame(() => {
           const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar-gl canvas")!;
           const copy = document.createElement("canvas");
@@ -79,13 +83,23 @@ const covered = (page: Page) =>
           ctx.drawImage(gl, 0, 0);
           const pixels = ctx.getImageData(0, 0, copy.width, copy.height).data;
           let n = 0;
-          for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) n++;
-          resolve(n);
+          const [x, y] = [[Infinity, -Infinity], [Infinity, -Infinity]];
+          for (let i = 3; i < pixels.length; i += 4) {
+            if (pixels[i] === 0) continue;
+            n++;
+            const at = (i - 3) / 4;
+            const [px, py] = [at % copy.width, Math.floor(at / copy.width)];
+            x[0] = Math.min(x[0], px);
+            x[1] = Math.max(x[1], px);
+            y[0] = Math.min(y[0], py);
+            y[1] = Math.max(y[1], py);
+          }
+          resolve({ pixels: n, width: n && x[1] - x[0] + 1, height: n && y[1] - y[0] + 1 });
         }),
       ),
   );
 const frames = async (page: Page, n: number) => {
-  const seen: number[] = [];
+  const seen: Covered[] = [];
   for (let i = 0; i < n; i++) seen.push(await covered(page));
   return seen;
 };
@@ -133,20 +147,39 @@ test("the mouth opens with the reply played and stays shut otherwise", async ({ 
   await mount(page, { entry: model.id, mode: "idle" });
   await drawn(page);
   await expect(page.getByTestId("orb")).toHaveCount(0);
-  const idle = await frames(page, 12);
+  // How tall the tiny model's triangle is for its width, which the mouth and the blink make taller, and leaning in
+  // (drawn nearer) does not change.
+  const tall = async () => median((await frames(page, 12)).map((c) => c.height / c.width));
+  const idle = await tall();
   // The person heard loudly: the mouth stays shut.
   await change(page, { mode: "input", level: 0.8 });
-  const heard = await frames(page, 12);
-  // The reply played at 0.8: the mouth wide open, the tiny model's triangle half as tall again.
+  const heard = await tall();
+  // The reply played at 0.8: the mouth wide open, the triangle half as tall again.
   await change(page, { mode: "output", level: 0.8 });
   await page.waitForTimeout(300);
-  const speaking = await frames(page, 12);
-  // Shut, but for a blink now and then: the tiny model's blink moves the same triangle.
-  expect(median(heard)).toBe(median(idle));
-  expect(median(speaking)).toBeGreaterThan(median(idle) * 1.3);
+  const speaking = await tall();
+  // Shut, but for a blink now and then: the tiny model's blink moves the same triangle. Within a pixel's rounding.
+  expect(Math.abs(heard - idle)).toBeLessThan(0.04);
+  expect(speaking).toBeGreaterThan(idle * 1.3);
   await change(page, { mode: "idle", level: undefined });
   await page.waitForTimeout(600);
-  expect(median(await frames(page, 12))).toBe(median(idle));
+  expect(Math.abs((await tall()) - idle)).toBeLessThan(0.04);
+});
+
+test("while the person is heard it leans in, drawn nearer: the face a twelfth larger, and back after", async ({ page, request }) => {
+  const [model] = await open(page, request);
+  await mount(page, { entry: model.id, mode: "idle" });
+  await drawn(page);
+  // The tiny model's triangle is not bound to a bone: how wide it is shows what the camera does alone.
+  const wide = async () => median((await frames(page, 5)).map((c) => c.width));
+  const idle = await wide();
+  await change(page, { mode: "input", level: 0.5 });
+  await page.waitForTimeout(1500);
+  // 8% nearer: 1 / 0.92 as wide.
+  expect((await wide()) / idle).toBeGreaterThan(1.06);
+  await change(page, { mode: "idle", level: undefined });
+  await page.waitForTimeout(1500);
+  expect(Math.abs((await wide()) / idle - 1)).toBeLessThan(0.02);
 });
 
 test("the canvas follows the box from 380 to 100 to 64 pixels without being made again, and frames the face below 160", async ({ page, request }) => {
@@ -256,7 +289,7 @@ test("a lost drawing context shows the orb until it is given back, and the model
   await lose("restoreContext");
   await drawn(page);
   await expect(page.getByTestId("orb")).toHaveCount(0);
-  expect(median(await frames(page, 5))).toBeGreaterThan(0);
+  expect(median((await frames(page, 5)).map((c) => c.pixels))).toBeGreaterThan(0);
 });
 
 test("unmounted, it deletes what it uploaded and gives its context back, also after a context was given back", async ({ page, request }) => {
@@ -296,7 +329,7 @@ test("a VRM 0.x model is drawn as a VRM 1.0 one is", async ({ page, request }) =
   const [model] = await open(page, request, [tinyVrm0()]);
   await mount(page, { entry: model.id, mode: "output" });
   await drawn(page);
-  expect(Math.max(...(await frames(page, 5)))).toBeGreaterThan(0);
+  expect(Math.max(...(await frames(page, 5)).map((c) => c.pixels))).toBeGreaterThan(0);
 });
 
 test.describe("with real models", () => {
@@ -351,7 +384,7 @@ test.describe("with real models", () => {
     const [model] = await open(page, request, [bytes]);
     await mount(page, { entry: model.id, mode: "thinking" });
     await drawn(page);
-    expect(Math.max(...(await frames(page, 3)))).toBeGreaterThan(0);
+    expect(Math.max(...(await frames(page, 3)).map((c) => c.pixels))).toBeGreaterThan(0);
     expect(warnings.filter((w) => /VRM/.test(w))).toEqual([]);
   });
 });

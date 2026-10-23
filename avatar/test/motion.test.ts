@@ -57,11 +57,16 @@ test("the mouth opens with the reply within 60 ms, shuts within 200 ms, and stay
   assert.equal(run(createMotion(seeded(3)), 1, { mode: "output", output: 1 }).at(-1)!.pose.expressions.aa > 0.99, true, "wide open at most");
 });
 
-test("it leans in only while the person is heard", () => {
-  // The neck, which only leaning moves.
-  const neck = (mode: AvatarMode) => run(createMotion(() => 0.5), 3, { mode }).at(-1)!.pose.bones.neck[0];
-  assert.ok(Math.abs(neck("input") - 0.06) < 0.001, `leaning ${neck("input")}`);
-  for (const mode of ["idle", "output", "thinking", "muted"] as AvatarMode[]) assert.equal(neck(mode), 0, mode);
+test("it leans in only while the person is heard, and is drawn 8% nearer then", () => {
+  // The neck, which only leaning moves, and how much nearer the camera is.
+  const leaning = (mode: AvatarMode, reduced = false) => {
+    const { bones, near } = run(createMotion(() => 0.5), 3, { mode, reduced }).at(-1)!.pose;
+    return { neck: bones.neck[0], near };
+  };
+  assert.ok(Math.abs(leaning("input").neck - 0.06) < 0.001, `leaning ${leaning("input").neck}`);
+  assert.ok(Math.abs(leaning("input").near - 0.08) < 0.001, `nearer by ${leaning("input").near}`);
+  assert.ok(Math.abs(leaning("input", true).near - 0.04) < 0.001, `with reduced motion, by half: ${leaning("input", true).near}`);
+  for (const mode of ["idle", "output", "thinking", "muted"] as AvatarMode[]) assert.deepEqual(leaning(mode), { neck: 0, near: 0 }, mode);
 });
 
 test("the thinking pose starts after 0.6 s of thinking, with a blink, and leaves as the mode changes", () => {

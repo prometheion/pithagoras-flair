@@ -184,10 +184,10 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
     framing = framing
       ? { y: damp(framing.y, goal.y, 6, dt), z: damp(framing.z, goal.z, 6, dt), at: damp(framing.at, goal.at, 6, dt) }
       : goal;
-    look(camera, framing);
     // Hair and clothes would jump after a pause (the box out of view): they start again from where they hang.
     if (gap > 500) vrm.springBoneManager?.reset();
     const moved = motion.step({ mode: mode(), output: levels.current.output, dt, reduced });
+    look(camera, { ...framing, z: framing.z * (1 - moved.near) });
     pose(vrm, moved);
     aim(vrm, camera, moved.gaze);
     vrm.update(dt);

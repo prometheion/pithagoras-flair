@@ -28,6 +28,11 @@ export interface Pose {
   expressions: { aa: number; oh: number; blink: number };
   bones: Record<Bone, [number, number, number]>;
   /**
+   * How much nearer the camera is drawn, as a share of its distance: the lean in, which seen from straight in front
+   * barely shows in the bones alone (the face 1% larger).
+   */
+  near: number;
+  /**
    * Where the eyes look, from the camera: to the viewer's right and up, each as a share of how far the model's eyes
    * turn that way (1 is their furthest; the stage turns it into the model's own angles).
    */
@@ -122,6 +127,7 @@ export function createMotion(random: () => number = Math.random) {
           leftLowerArm: [0, 0, -0.15],
           rightLowerArm: [0, 0, 0.15],
         },
+        near: 0.08 * leaning,
         gaze: [look[0] + 0.7 * pose, look[1] + 0.5 * pose],
       };
     },
