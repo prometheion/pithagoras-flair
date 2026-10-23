@@ -1,0 +1,34 @@
+pithagoras-blender
+Copyright 2026 Anirban Kar and Contributors
+
+The extension (its TypeScript, the viewer page server/viewer.html, its build and its Dockerfile) is licensed under the
+Apache License, Version 2.0 (LICENSE), as the rest of the pithagoras-flair repository is. server/server.py, which runs
+inside Blender and uses its Python API (bpy), is licensed under the GNU General Public License, version 3 or (at your
+option) any later version (server/LICENSE). In the image both are in /usr/share/doc/pithagoras-blender/, as
+LICENSE.Apache-2.0 and LICENSE.GPL-3.0, beside this NOTICE.
+
+This extension is not made or endorsed by the Blender Foundation. Blender is a trademark of the Blender Foundation; the
+name is used here only to say what the extension runs.
+
+
+The container image (ghcr.io/thecodacus/pithagoras-blender) redistributes:
+
+- Blender 5.2.2: the official Linux build, blender-5.2.2-linux-x64.tar.xz from
+  https://download.blender.org/release/Blender5.2/, checked against blender.org's published SHA-256, unpacked in
+  /opt/blender. Blender's source code is licensed under the GNU General Public License, version 2 or any later
+  version, with parts under other licences (Apache-2.0 for Cycles among them); its binaries are distributed under the
+  GNU General Public License, version 3 or any later version. The licence texts Blender ships are in the image at
+  /opt/blender/copyright.txt and in /opt/blender/license/. The corresponding source, blender-5.2.2.tar.xz from
+  https://download.blender.org/source/, is attached to every GitHub release of pithagoras-flair that publishes the
+  image, so it does not depend on blender.org keeping it.
+
+- Ubuntu 24.04 (the base image ubuntu:24.04) and the packages installed on it: ca-certificates, curl, xz-utils and the
+  X11 and GL runtime libraries Blender links against (libx11-6, libxi6, libxxf86vm1, libxfixes3, libxrender1,
+  libxkbcommon0, libsm6, libice6, libgl1, libegl1, libglx0, libopengl0, libxext6, libxrandr2, libxinerama1,
+  libxcursor1), with what they depend on. Each is under its own licence, in /usr/share/doc/<package>/copyright in the
+  image. Their sources are in Ubuntu's archive (https://archive.ubuntu.com/ubuntu/, `apt-get source <package>`), and the
+  list of the image's packages, with their versions, is attached to every release that publishes the image.
+
+The NVIDIA driver is not in the image: the NVIDIA container toolkit gives the container the host's driver as it starts,
+and the extension binds the driver's OptiX weights (/usr/share/nvidia/nvoptix.bin) from the host where the toolkit
+does not.

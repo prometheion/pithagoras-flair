@@ -6,7 +6,11 @@ Each extension lives in a folder of its own and is a separate package. You insta
 
 ## Extensions
 
-None yet. The first one in the works is a 3D avatar for voice mode: a VRM character drawn where the orb is, which blinks, breathes and lip-syncs to the agent's voice.
+- [Blender](blender/README.md) (`pithagoras-blender`): a headless Blender in a container on the portal's Docker host, its tools in every chat, and its live viewport in a panel beside the chat.
+
+In the works: a 3D avatar for voice mode, a VRM character drawn where the orb is, which blinks, breathes and lip-syncs to the agent's voice.
+
+The extensions are npm workspaces of this repository: `npm ci` at its root installs what they are built with, `npm run build` builds each, and `npm test` runs their tests. Code their server halves share is in `shared/`, bundled into each one's `server.js`.
 
 ## Building one
 
