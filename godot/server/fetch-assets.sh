@@ -11,7 +11,8 @@
 #                                         tags, checked against the SHA-256 pinned below, for the image's
 #                                         /usr/share/doc/pithagoras-godot
 #
-# Files that are already present and verify are not downloaded again.
+# Files that are already present and verify are not downloaded again. Needs curl and bsdtar (libarchive: macOS has it,
+# Debian and Ubuntu have it in libarchive-tools): the templates are a zip read as it downloads, which GNU tar cannot.
 set -eu
 
 GODOT_VERSION="${GODOT_VERSION:-4.7.2}"
@@ -26,6 +27,8 @@ ts() { date "+%Y-%m-%d %H:%M:%S"; }
 step() { echo "$(ts) $*"; }
 sha512() { if command -v sha512sum >/dev/null 2>&1; then sha512sum "$@"; else shasum -a 512 "$@"; fi; }
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+
+command -v bsdtar >/dev/null 2>&1 || { echo "bsdtar is needed to read the export templates as they download (apt-get install libarchive-tools)" >&2; exit 1; }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 A="$HERE/assets"
@@ -63,7 +66,7 @@ else
   sha512 < "$tmp/stream" | cut -d' ' -f1 > "$tmp/sum" &
   sumpid=$!
   # bsdtar reads a zip sequentially from a pipe; drain whatever it leaves so the checksum covers the whole file
-  curl -fL --progress-bar "$GH/$TPZ" | tee "$tmp/stream" | { tar -xf - -C "$tmp" $KEEP; cat > /dev/null; }
+  curl -fL --progress-bar "$GH/$TPZ" | tee "$tmp/stream" | { bsdtar -xf - -C "$tmp" $KEEP; cat > /dev/null; }
   wait "$sumpid"
   got="$(cat "$tmp/sum")"
   [ "$got" = "$want_tpz" ] || { echo "SHA512 mismatch for ${TPZ}: $got" >&2; exit 1; }
