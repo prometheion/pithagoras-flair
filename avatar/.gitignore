@@ -1,0 +1,4 @@
+# Built by build.mjs (npm run build), not kept in git: the extension, and the browser tests' page.
+/web/
+/server.js
+/test/browser/.build/

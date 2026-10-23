@@ -1,0 +1,13 @@
+{
+  "name": "pithagoras-flair",
+  "private": true,
+  "description": "Cosmetic and opinionated extensions for Pithagoras, each published as a package of its own",
+  "pi": {},
+  "workspaces": ["avatar"],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm test --workspaces",
+    "test:browser": "npm run test:browser --workspaces"
+  },
+  "license": "Apache-2.0"
+}

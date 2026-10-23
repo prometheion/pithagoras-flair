@@ -1,0 +1,62 @@
+{
+  "name": "@pithagoras/flair-avatar",
+  "version": "0.1.0",
+  "description": "A 3D avatar for Pithagoras voice mode: a VRM model drawn where the orb is, which lip-syncs, blinks, breathes and looks at you",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pithagoras",
+    "vrm",
+    "avatar",
+    "voice"
+  ],
+  "homepage": "https://github.com/thecodacus/pithagoras-flair/tree/main/avatar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thecodacus/pithagoras-flair.git",
+    "directory": "avatar"
+  },
+  "bugs": {
+    "url": "https://github.com/thecodacus/pithagoras-flair/issues"
+  },
+  "pi": {},
+  "pithagoras": {
+    "client": "./web/client.js",
+    "style": "./web/client.css",
+    "server": "./server.js"
+  },
+  "files": [
+    "web",
+    "server.js",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs && tsc --noEmit -p .",
+    "prepack": "npm run build",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@pithagoras/extension-api": "^0.2.1",
+    "@pixiv/three-vrm": "3.5.5",
+    "@playwright/test": "1.63.0",
+    "@types/express": "5.0.6",
+    "@types/node": "22.20.1",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@types/three": "0.186.0",
+    "esbuild": "0.28.2",
+    "express": "5.2.1",
+    "postcss": "8.5.23",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwindcss": "3.4.19",
+    "three": "0.186.1",
+    "tsx": "4.23.1",
+    "typescript": "5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "Apache-2.0"
+}
