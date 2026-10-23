@@ -48,12 +48,14 @@ export const de: Record<string, string> = {
   "Running GDScript in the editor": "Führt GDScript im Editor aus",
 
   // What the server half answers the page with.
-  "Docker cannot be reached.": "Docker ist nicht erreichbar.",
-  "Wait until what is under way is done.": "Warte, bis abgeschlossen ist, was gerade läuft.",
-  "The server exited. Its log says why.": "Der Server wurde beendet. Sein Protokoll sagt, warum.",
-  "The host pins the GPU for Godot, so it cannot be chosen here.": "Der Host legt die GPU für Godot fest, daher kann sie hier nicht gewählt werden.",
-  "Choose a GPU by its UUID, or automatic.": "Wähle eine GPU über ihre UUID oder Automatisch.",
-  "That GPU is not on this host.": "Diese GPU gibt es auf diesem Host nicht.",
+  "Godot is being set up already.": "Godot wird bereits eingerichtet.",
+  "Docker does not answer.": "Docker antwortet nicht.",
+  "Wait for the setup to finish.": "Warte, bis die Einrichtung abgeschlossen ist.",
+  "Godot exited. Its log says why.": "Godot wurde beendet. Sein Protokoll sagt, warum.",
+  "The host fixes the card for this server.": "Der Host legt die Karte für diesen Server fest.",
+  "That card is not on this host.": "Diese Karte gibt es auf diesem Host nicht.",
+  "A container named pithagoras-godot is there that is not this extension's. Rename or remove it first.":
+    "Es gibt einen Container namens pithagoras-godot, der nicht zu dieser Erweiterung gehört. Benenne ihn um oder entferne ihn zuerst.",
   "Choose one of the screen sizes offered.": "Wähle eine der angebotenen Bildschirmgrößen.",
 
   // The page in Settings.
@@ -79,7 +81,6 @@ export const de: Record<string, string> = {
     "Es gibt schon einen Container namens {name}, der nicht zu dieser Erweiterung gehört. Benenne ihn um oder entferne ihn zuerst.",
   "The real Godot editor runs in a container on this host's Docker, with its tools in every chat and its screen in a panel beside the chat.":
     "Der echte Godot-Editor läuft in einem Container im Docker dieses Hosts, mit seinen Werkzeugen in jedem Chat und seinem Bildschirm in einem Panel neben dem Chat.",
-  "Being made again with the current settings…": "Wird mit den aktuellen Einstellungen neu erstellt…",
   "Install (downloads about 0.6 GB)": "Installieren (lädt etwa 0,6 GB herunter)",
   Start: "Starten",
   Stop: "Anhalten",

@@ -4,12 +4,12 @@ import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { serverProxy } from "../../shared/proxy.ts";
+import { proxyUi, uiUpgrade } from "../../shared/proxy.ts";
 
 /**
  * The server's pages through the portal, at /api/x/pithagoras-godot/ui/: the portal's cookie and the page's own
  * credentials left out, the server's token added, writes only from the portal's own page, the answers framed only by
- * the portal, and the stream's WebSocket passed on both ways. That the portal asks for its sign-in first, of every
+ * the portal and never setting a cookie on its origin, and the stream's WebSocket passed on both ways. That the portal asks for its sign-in first, of every
  * request and stream under /api/x, is core's (its own tests).
  */
 
@@ -19,7 +19,7 @@ const upstream = http.createServer((req, res) => {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     seen.requests.push({ method: req.method, url: req.url, headers: req.headers, body });
-    res.writeHead(200, { "content-type": "text/plain", ...(req.url?.startsWith("/own-policy") ? { "content-security-policy": "default-src 'self'" } : {}) });
+    res.writeHead(200, { "content-type": "text/plain", "set-cookie": "selkies=1; Path=/", ...(req.url?.startsWith("/own-policy") ? { "content-security-policy": "default-src 'self'" } : {}) });
     res.end("the editor");
   });
 });
@@ -37,16 +37,18 @@ upstream.listen(0, "127.0.0.1");
 await new Promise((resolve) => upstream.once("listening", resolve));
 let port = (upstream.address() as AddressInfo).port;
 
-const proxy = serverProxy({ port: () => port, token: () => "server-token", app: "Godot" });
+const options = { port: () => port, token: () => "server-token", notAnswering: "Godot antwortet nicht. / Godot is not answering." };
+const ui = proxyUi(options);
+const stream = uiUpgrade(options);
 // Mounted as the portal mounts an extension's routes: /api/x/<package>, then the router's /ui.
 const router = express.Router();
-router.use("/ui", proxy.ui);
+router.use("/ui", ui);
 const app = express().use("/api/x/pithagoras-godot", router);
 const portal = http.createServer(app);
 // Core checks the sign-in and the page, strips /api/x/<package>, and hands the stream to the extension's handler.
 portal.on("upgrade", (req, socket, head) => {
   req.url = req.url!.replace(/^\/api\/x\/pithagoras-godot/, "");
-  proxy.upgrade(req, socket, head);
+  stream(req, socket, head);
 });
 portal.listen(0, "127.0.0.1");
 await new Promise((resolve) => portal.once("listening", resolve));
@@ -83,8 +85,9 @@ test("a page goes on without the portal's cookie, the page's credentials or wher
   assert.equal(asked.headers.host, `127.0.0.1:${port}`);
 });
 
-test("only the portal's own pages may frame it, nothing is taken for another type, and a file runs no script", async () => {
+test("only the portal's own pages may frame it, nothing is taken for another type, a file runs no script, and no cookie is set", async () => {
   const page = await fetch(`${at}/ui/`);
+  assert.equal(page.headers.get("set-cookie"), null, "an answer is the portal's origin's: a cookie from the container would sit beside the portal's own");
   assert.equal(page.headers.get("content-security-policy"), "frame-ancestors 'self'");
   assert.equal(page.headers.get("x-content-type-options"), "nosniff");
   assert.equal(seen.requests.at(-1)!.url, "/");
@@ -96,7 +99,7 @@ test("only the portal's own pages may frame it, nothing is taken for another typ
 
 test("/ui is /ui/, as the pages load what they need from where they are", async () => {
   const answer = await fetch(`${at}/ui?lang=de`, { redirect: "manual" });
-  assert.equal(answer.status, 301);
+  assert.equal(answer.status, 302);
   assert.equal(answer.headers.get("location"), "ui/?lang=de");
 });
 
@@ -106,7 +109,7 @@ test("a write from another page is refused; one from the portal's own, by Origin
   for (const headers of [{ origin: "http://127.0.0.1:3000" }, { origin: "http://evil.test" }, { "sec-fetch-site": "same-site" }, {}]) {
     const refused = await post(headers);
     assert.equal(refused.status, 403, JSON.stringify(headers));
-    assert.match((await refused.json()).error, /did not come from the portal's own page/);
+    assert.equal((await refused.json()).error, "Only the portal's own pages may change this.");
   }
   assert.equal(seen.requests.length, 0, "nothing reached the server");
   assert.equal((await post({ origin: `http://127.0.0.1:${portalPort}` })).status, 200);

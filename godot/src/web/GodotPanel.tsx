@@ -1,4 +1,5 @@
 import type { ChatProps, PanelProps } from "@pithagoras/extension-api";
+import { PREFIX } from "../labels";
 import { portal, t } from "../portal";
 import { api } from "./api";
 import { installed, useGodotState } from "./state";
@@ -97,6 +98,6 @@ export function PanelActions({ panel }: PanelProps) {
 export function useButton({ chat }: ChatProps) {
   portal.locale.use();
   const { state } = useGodotState();
-  const live = portal.chats.use(chat.id, (feed) => feed.calls.some((call) => call.status === "running" && call.name.startsWith("godot_")));
+  const live = portal.chats.use(chat.id, (feed) => feed.calls.some((call) => call.status === "running" && call.name.startsWith(`${PREFIX}_`)));
   return { hidden: !installed(state), live, title: t("The Godot editor") };
 }

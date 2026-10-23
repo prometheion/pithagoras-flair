@@ -64,7 +64,7 @@ test("every text the browser half shows has its German, and the German has nothi
 });
 
 test("the label table names every tool the server lists, and nothing else", () => {
-  assert.deepEqual(Object.keys(LABELS).sort(), TOOLS.map((t) => `godot_${t.name}`).sort());
+  assert.deepEqual(Object.keys(LABELS).sort(), TOOLS.map((t) => t.name).sort());
   for (const label of Object.values(LABELS)) assert.ok(label in de, label);
 });
 

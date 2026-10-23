@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { LuGamepad2 } from "react-icons/lu";
-import type { Portal, ToolCallView } from "@pithagoras/extension-api";
-import { LABELS } from "./labels";
+import type { Portal } from "@pithagoras/extension-api";
+import { LABELS, PREFIX } from "./labels";
 import { msg, portal, setPortal, t } from "./portal";
 import { GodotPanel, PanelActions, useButton } from "./web/GodotPanel";
 import { forget } from "./web/state";
@@ -50,11 +50,11 @@ export default function godot(given: Portal) {
   });
 
   // What the card of each tool's call says: the portal's own card, with the tool's words in the page's language.
-  for (const tool of Object.keys(LABELS)) {
+  for (const [tool, label] of Object.entries(LABELS)) {
     portal.slots.register("chat.tool", {
       id: tool,
-      tool,
-      describe: (call: ToolCallView) => ({ label: t(LABELS[call.name]) }),
+      tool: `${PREFIX}_${tool}`,
+      describe: () => ({ label: t(label) }),
       component: ({ card }) => <>{card}</>,
     });
   }

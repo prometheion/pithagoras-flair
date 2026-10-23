@@ -86,21 +86,22 @@ test("the viewer is the server's, through the portal, with the token added", asy
 
 test("another screen size makes the running editor again with it; a size not offered, or a GPU not there, is refused", async () => {
   const before = docker.containers.get("flairtest-godot")!.id;
-  assert.deepEqual((await send("PUT", "/display", { display: "1280x720" })).body, { ok: true, restarting: true });
+  assert.deepEqual((await send("PUT", "/display", { display: "1280x720" })).body, { display: "1280x720", restarting: true });
   await until((s) => s.state === "running" && !s.busy && docker.containers.get("flairtest-godot")!.id !== before, "made again");
   assert.ok((docker.containers.get("flairtest-godot")!.spec as any).Env.includes("DISPLAY_SIZE=1280x720"));
   assert.equal((await get("/state")).display, "1280x720");
   assert.equal((await send("PUT", "/display", { display: "800x600" })).status, 400);
   const gpu = await send("PUT", "/gpu", { gpu: "GPU-not-here" });
   assert.equal(gpu.status, 400);
-  assert.equal(gpu.body.error, "That GPU is not on this host.");
+  assert.equal(gpu.body.error, "That card is not on this host.");
 });
 
 test("the cards, for the page", async () => {
   const hw = await get("/hardware");
   assert.deepEqual(hw.cards.map((c: { uuid: string }) => c.uuid), ["GPU-aaaa0000", "GPU-bbbb1111"]);
-  assert.equal(hw.held, "GPU-bbbb1111");
+  assert.equal(hw.wanted, "GPU-bbbb1111", "the card the server is on");
   assert.equal(hw.chosen, "");
+  assert.equal(hw.pinned, false);
 });
 
 test("Stop, Start, and Remove with the projects: the tools leave every list", async () => {

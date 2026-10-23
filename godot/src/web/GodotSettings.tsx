@@ -4,7 +4,7 @@ import { msg, portal, t } from "../portal";
 import { api, type GodotState, type Hardware, type ServerState } from "./api";
 import { HTTPS_GUIDE, insecureNote } from "./GodotPanel";
 import { refresh, useGodotState } from "./state";
-import { DISPLAYS } from "../server/spec";
+import { DISPLAYS } from "../displays";
 
 /** What the status pill says for each state of the server. */
 const PILL: Record<ServerState, string> = {
@@ -18,7 +18,7 @@ const PILL: Record<ServerState, string> = {
   foreign: msg("Name taken"),
 };
 
-const GB = (mib: number) => portal.format.number(mib / 1024, { maximumFractionDigits: 1 });
+const GB = (mib: number | null) => (mib === null ? "?" : portal.format.number(mib / 1024, { maximumFractionDigits: 1 }));
 
 /**
  * What the uninstall asks. The dialog is drawn by the portal, away from this page, so the box reports its answer to
@@ -138,7 +138,6 @@ export function GodotSettings() {
           <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-accent">{t(PILL[state.state])}</span>
         </div>
         {line && <p className="mt-2 text-xs text-fg-faint">{line}</p>}
-        {state.stale && state.state === "running" && <p className="mt-2 text-xs text-fg-faint">{t("Being made again with the current settings…")}</p>}
         <div className="mt-3 flex flex-wrap gap-2">
           {state.state === "absent" && (
             <button type="button" disabled={working} onClick={() => act(api.install)} className={primary}>
@@ -171,28 +170,28 @@ export function GodotSettings() {
       </ui.Section>
 
       <ui.Section title={t("GPU")}>
-        {hardwareError && <p className="text-xs text-danger">{hardwareError}</p>}
+        {hardwareError && <p className="text-xs text-danger">{said(hardwareError)}</p>}
         {!hardware && !hardwareError && <p className="text-xs text-fg-faint">{t("Looking for GPUs…")}</p>}
         {hardware && !hardware.cards.length && <p className="text-xs text-fg-muted">{t("No NVIDIA GPU found: Godot opens Compatibility projects with software OpenGL and cannot render Forward+ projects.")}</p>}
         {hardware && hardware.error && !hardware.cards.length && <p className="mt-1 font-mono text-[11px] text-fg-faint">{hardware.error}</p>}
         {hardware && hardware.cards.length > 0 && (
           <div className="space-y-1.5" role="radiogroup" aria-label={t("GPU")}>
-            {!state.pinned && (
+            {!hardware.pinned && (
               <label className="flex items-center gap-2 text-xs">
-                <input type="radio" name="godot-gpu" disabled={working} checked={!state.chosen} onChange={() => void chooseGpu("")} />
+                <input type="radio" name="godot-gpu" disabled={working} checked={!hardware.chosen} onChange={() => void chooseGpu("")} />
                 {t("Automatic: the card with the most free memory")}
               </label>
             )}
             {hardware.cards.map((card) => (
               <label key={card.uuid} className="flex items-center gap-2 text-xs">
-                <input type="radio" name="godot-gpu" disabled={working || !!state.pinned} checked={state.pinned ? true : state.chosen === card.uuid} onChange={() => void chooseGpu(card.uuid)} />
+                <input type="radio" name="godot-gpu" disabled={working || hardware.pinned} checked={hardware.pinned || hardware.chosen === card.uuid} onChange={() => void chooseGpu(card.uuid)} />
                 <span className="text-fg">{card.name}</span>
                 <span className="font-mono text-[11px] text-fg-faint">…{card.uuid.slice(-8)}</span>
                 <span className="text-fg-faint">{t("{used} of {total} GB in use", { used: GB(card.usedMiB), total: GB(card.totalMiB) })}</span>
-                {hardware.held === card.uuid && <span className="rounded bg-fg/5 px-1.5 text-[11px] text-fg-muted">{t("in use by Godot")}</span>}
+                {state.card === card.uuid && <span className="rounded bg-fg/5 px-1.5 text-[11px] text-fg-muted">{t("in use by Godot")}</span>}
               </label>
             ))}
-            {state.pinned && <p className="text-xs text-fg-faint">{t("The host pins Godot to this card (PITHAGORAS_GODOT_GPU).")}</p>}
+            {hardware.pinned && <p className="text-xs text-fg-faint">{t("The host pins Godot to this card (PITHAGORAS_GODOT_GPU).")}</p>}
           </div>
         )}
         <p className="mt-2 text-xs text-fg-faint">
@@ -205,7 +204,7 @@ export function GodotSettings() {
         <p className="mt-2 text-xs text-fg-faint">{t("Smaller is sharper in the panel; changing it restarts the editor.")}</p>
       </ui.Section>
 
-      {state.logs && (
+      {state.log && (
         <ui.Section
           title={t("Log")}
           action={
@@ -215,7 +214,7 @@ export function GodotSettings() {
           }
         >
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-fg/5 p-2 font-mono text-[10px] text-fg-faint" aria-label={t("Godot server log")}>
-            {state.logs}
+            {state.log}
           </pre>
         </ui.Section>
       )}
@@ -223,7 +222,7 @@ export function GodotSettings() {
       <ui.Section title={t("Good to know")}>
         <ul className="list-disc space-y-1.5 pl-4 text-xs text-fg-muted">
           <li>{t("Projects are kept in the Docker volume {volume}. Remove keeps them unless you ask for them to go too.", { volume: state.volume })}</li>
-          <li>{t("The image stays on disk after Remove. To delete it: docker image rm {image}", { image: state.image ?? state.wanted })}</li>
+          <li>{t("The image stays on disk after Remove. To delete it: docker image rm {image}", { image: state.image })}</li>
           <li>{t("Remove the server here before you uninstall the extension: the container outlives the extension.")}</li>
           <li>{t("One editor serves every chat and you: agents in two chats work in the same open project.")}</li>
           <li>{t("The GPU's memory is shared with whatever else uses the card.")}</li>

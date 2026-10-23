@@ -15,7 +15,7 @@ import type { ContainerInfo, ContainerSpec, Docker, PullState } from "../../shar
 
 export const TOOLS = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")).tools as { name: string; description: string; inputSchema: Record<string, unknown> }[];
 
-type Kept = { spec: ContainerSpec; owner: string; id: string; running: boolean; exitCode: number; startedAt: string; logs: string; restarting: boolean };
+type Kept = { spec: ContainerSpec; owner: string; id: string; running: boolean; exitCode: number; startedAt: string; logs: string; restarting: boolean; restarts: number };
 
 export function fakeDocker(options: { owner?: string; network?: string; gpus?: string; noGpu?: string } = {}) {
   const owner = options.owner ?? "pithagoras-godot";
@@ -53,7 +53,7 @@ export function fakeDocker(options: { owner?: string; network?: string; gpus?: s
       async create(name, spec) {
         calls.push(`create ${name}`);
         containers.delete(name);
-        containers.set(name, { spec, owner, id: `id${++n}`, running: false, exitCode: 0, startedAt: "", logs: "", restarting: false });
+        containers.set(name, { spec: structuredClone(spec), owner, id: `id${++n}`, running: false, exitCode: 0, startedAt: "", logs: "", restarting: false, restarts: 0 });
         return info(name, containers.get(name)!);
       },
       async start(name) {
@@ -67,6 +67,7 @@ export function fakeDocker(options: { owner?: string; network?: string; gpus?: s
           return;
         }
         kept.running = true;
+        kept.restarts = 0;
         kept.startedAt = `t${++n}`;
       },
       async stop(name) {
@@ -87,6 +88,7 @@ export function fakeDocker(options: { owner?: string; network?: string; gpus?: s
           Config: { Image: k.spec.Image, Labels: k.spec.Labels ?? {} },
           HostConfig: k.spec.HostConfig,
           State: { Running: k.running, Restarting: k.restarting, ExitCode: k.exitCode, StartedAt: k.startedAt },
+          RestartCount: k.restarts,
         };
       },
       update: async () => {},
@@ -107,7 +109,7 @@ export function fakeDocker(options: { owner?: string; network?: string; gpus?: s
     },
   };
   /** A container someone else made, under `name`. */
-  const foreign = (name: string, by = "") => containers.set(name, { spec: { Image: "x" }, owner: by, id: `id${++n}`, running: true, exitCode: 0, startedAt: "t0", logs: "", restarting: false });
+  const foreign = (name: string, by = "") => containers.set(name, { spec: { Image: "x" }, owner: by, id: `id${++n}`, running: true, exitCode: 0, startedAt: "t0", logs: "", restarting: false, restarts: 0 });
   return { docker, containers, volumes, images, calls, state, foreign };
 }
 

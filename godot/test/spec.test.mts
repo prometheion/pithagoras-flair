@@ -1,13 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { specHash } from "../../shared/service.ts";
-import { containerSpec, IMAGE, names, VERSION } from "../src/server/spec.ts";
+import { specHash, stamped } from "../../shared/service.ts";
+import { displayOf } from "../src/displays.ts";
+import { godotSpec, IMAGE, names, VERSION } from "../src/server/spec.ts";
 
 /** The Godot server's container as the extension makes it: what the live godot-server's compose had, on the portal's loopback. */
 
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-const plan = { networkMode: "container:portal-1", image: IMAGE, token: "t0k3n", port: 3880, display: "1600x900", volume: "pithagoras-godot-data" };
+const plan = { network: "container:portal-1", token: "t0k3n", optix: "none" as const };
+const server = { port: 3880, volume: "pithagoras-godot-data", image: IMAGE, display: "1600x900" as const };
 
 test("the image is the package's version, so a release cannot forget to move it", () => {
   assert.equal(VERSION, pkg.version);
@@ -15,7 +17,7 @@ test("the image is the package's version, so a release cannot forget to move it"
 });
 
 test("the container: on the portal's loopback, restarted unless stopped, with its token, its port, its screen and its volume", () => {
-  const spec = containerSpec({ ...plan, card: "GPU-bbbb1111" }) as any;
+  const spec = stamped(godotSpec({ ...plan, card: { uuid: "GPU-bbbb1111" } }, server)) as any;
   assert.equal(spec.Image, IMAGE);
   assert.equal(spec.Tty, true, "plain-text logs");
   assert.deepEqual(spec.Env, ["GODOT_SERVER_TOKEN=t0k3n", "GODOT_SERVER_PORT=3880", "DISPLAY_SIZE=1600x900", "NVIDIA_DRIVER_CAPABILITIES=all"]);
@@ -34,28 +36,38 @@ test("the container: on the portal's loopback, restarted unless stopped, with it
 });
 
 test("without a card it asks Docker for no GPU", () => {
-  assert.deepEqual((containerSpec(plan) as any).HostConfig.DeviceRequests, []);
+  assert.deepEqual((godotSpec(plan, server) as any).HostConfig.DeviceRequests, []);
 });
 
 test("every name comes from the portal's environment where it says one", () => {
-  assert.deepEqual(names({}), { container: "pithagoras-godot", volume: "pithagoras-godot-data", probe: "pithagoras-godot-probe", port: 3880, image: IMAGE, gpu: undefined });
-  const env = {
-    PITHAGORAS_GODOT_CONTAINER: "flairtest-godot",
-    PITHAGORAS_GODOT_VOLUME: "flairtest-godot-data",
-    PITHAGORAS_GODOT_PORT: "3881",
-    PITHAGORAS_GODOT_IMAGE: "flairtest-pithagoras-godot:0.1.0",
-    PITHAGORAS_GODOT_GPU: "GPU-648bf6c5",
-  };
-  assert.deepEqual(names(env), { container: "flairtest-godot", volume: "flairtest-godot-data", probe: "flairtest-godot-probe", port: 3881, image: "flairtest-pithagoras-godot:0.1.0", gpu: "GPU-648bf6c5" });
-  assert.equal(names({ PITHAGORAS_GODOT_CONTAINER: "other" }).volume, "other-data", "the volume follows the container's name");
-  assert.throws(() => names({ PITHAGORAS_GODOT_PORT: "godot" }), /PITHAGORAS_GODOT_PORT/);
+  const saved = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) if (key.startsWith("PITHAGORAS_GODOT_")) delete process.env[key];
+    assert.deepEqual(names(), { container: "pithagoras-godot", volume: "pithagoras-godot-data", probe: "pithagoras-godot-probe", port: 3880, image: IMAGE });
+    Object.assign(process.env, {
+      PITHAGORAS_GODOT_CONTAINER: "flairtest-godot",
+      PITHAGORAS_GODOT_PORT: "3881",
+      PITHAGORAS_GODOT_IMAGE: "flairtest-pithagoras-godot:0.1.0",
+      PITHAGORAS_GODOT_GPU: "GPU-648bf6c5",
+    });
+    assert.deepEqual(names(), { container: "flairtest-godot", volume: "flairtest-godot-data", probe: "flairtest-godot-probe", port: 3881, image: "flairtest-pithagoras-godot:0.1.0", gpu: "GPU-648bf6c5" });
+  } finally {
+    process.env = saved;
+  }
+});
+
+test("the screen is one the page offers, else the default", () => {
+  assert.equal(displayOf("1280x720"), "1280x720");
+  assert.equal(displayOf("800x600"), "1600x900");
+  assert.equal(displayOf(undefined), "1600x900");
 });
 
 test("the spec's hash changes with the image, the card and the screen, and not with the network", () => {
-  const base = specHash(containerSpec({ ...plan, card: "GPU-a" }));
-  assert.notEqual(specHash(containerSpec({ ...plan, card: "GPU-a", image: "ghcr.io/thecodacus/pithagoras-godot:0.1.1" })), base);
-  assert.notEqual(specHash(containerSpec({ ...plan, card: "GPU-b" })), base);
-  assert.notEqual(specHash(containerSpec({ ...plan, card: undefined })), base);
-  assert.notEqual(specHash(containerSpec({ ...plan, card: "GPU-a", display: "1280x720" })), base);
-  assert.equal(specHash(containerSpec({ ...plan, card: "GPU-a", networkMode: "host" })), base);
+  const card = { uuid: "GPU-a" };
+  const base = specHash(godotSpec({ ...plan, card }, server));
+  assert.notEqual(specHash(godotSpec({ ...plan, card }, { ...server, image: "ghcr.io/thecodacus/pithagoras-godot:0.1.1" })), base);
+  assert.notEqual(specHash(godotSpec({ ...plan, card: { uuid: "GPU-b" } }, server)), base);
+  assert.notEqual(specHash(godotSpec(plan, server)), base);
+  assert.notEqual(specHash(godotSpec({ ...plan, card }, { ...server, display: "1280x720" })), base);
+  assert.equal(specHash(godotSpec({ ...plan, card, network: "host" }, server)), base);
 });
