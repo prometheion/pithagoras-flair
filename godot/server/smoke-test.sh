@@ -1,7 +1,8 @@
 #!/bin/sh
 # The image's smoke test, which the release workflow runs before it publishes the image: the image started with no
-# GPU and a random token, MCP answering ping, tools/list equal to the committed tools.json (a change to the server's
-# tools must change that file, and with it the label table and its German), and the viewer's routes refusing a request
+# GPU and a random token, MCP answering ping, its tools/list and the instructions its initialize gives equal to the
+# committed tools.json, which is what the extension relays (a change to the server's tools or instructions must change
+# that file, and with it the label table and its German), and the viewer's routes refusing a request
 # without the token. The checks run inside the container, with its own Python. The container is removed at the end,
 # whatever happened.
 #
@@ -24,13 +25,13 @@ step "1/3 starting $IMAGE as $NAME (no GPU, network $NETWORK, port $PORT)"
 docker run -d --name "$NAME" --network "$NETWORK" --init -e GODOT_SERVER_TOKEN="$TOKEN" -e GODOT_SERVER_PORT="$PORT" "$IMAGE" >/dev/null
 docker cp "$HERE/tools.json" "$NAME:/tmp/tools.json"
 
-step "2/3 MCP ping, tools/list against tools.json, and the routes without the token"
+step "2/3 MCP ping, initialize and tools/list against tools.json, and the routes without the token"
 docker exec -i "$NAME" python3 - "$PORT" "$TOKEN" <<'PY'
 import json, sys, time, urllib.error, urllib.request
 port, token = sys.argv[1], sys.argv[2]
 base = f"http://127.0.0.1:{port}"
-def rpc(method):
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": {}}).encode()
+def rpc(method, params=None):
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode()
     req = urllib.request.Request(base + "/mcp", body, {"Content-Type": "application/json", "Authorization": f"Bearer {token}"})
     return json.loads(urllib.request.urlopen(req, timeout=10).read())["result"]
 for _ in range(120):
@@ -41,12 +42,16 @@ for _ in range(120):
         time.sleep(1)
 else:
     sys.exit("the server did not answer ping within 120 s")
+kept = json.load(open("/tmp/tools.json"))
+said = rpc("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}})["instructions"]
+if said != kept["instructions"]:
+    sys.exit("initialize gives other instructions than tools.json")
 got = rpc("tools/list")["tools"]
-want = json.load(open("/tmp/tools.json"))["tools"]
+want = kept["tools"]
 if got != want:
     names = lambda tools: [t["name"] for t in tools]
     sys.exit(f"tools/list is not tools.json: {names(got)} against {names(want)} (or a description or schema differs)")
-print(f"  {len(got)} tools, as tools.json lists them")
+print(f"  {len(got)} tools and the instructions, as tools.json has them")
 for path in ("/", "/api/state", "/mcp", "/stream/"):
     try:
         urllib.request.urlopen(urllib.request.Request(base + path, b"{}" if path == "/mcp" else None), timeout=10)

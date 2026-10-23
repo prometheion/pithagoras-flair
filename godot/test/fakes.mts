@@ -13,7 +13,9 @@ import type { ContainerInfo, ContainerSpec, Docker, PullState } from "../../shar
  * reaches a Docker daemon or a container.
  */
 
-export const TOOLS = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")).tools as { name: string; description: string; inputSchema: Record<string, unknown> }[];
+/** The Godot server's instructions and tools, as the extension relays them (server/tools.json). */
+export const LISTED = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")) as { instructions: string; tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] };
+export const TOOLS = LISTED.tools;
 
 type Kept = { spec: ContainerSpec; owner: string; id: string; running: boolean; exitCode: number; startedAt: string; logs: string; restarting: boolean; restarts: number };
 

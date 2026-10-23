@@ -1,8 +1,9 @@
 #!/bin/sh
 # The Blender image's smoke test, as the release runs it before the image is pushed: the image started with no GPU, a
-# random token and the server's port on this machine's loopback (host network), until MCP answers; its tools/list
-# compared with blender/server/tools.json (a change to the server's tools changes that file, the label table and its
-# German); the viewer's routes refused without the token; then the container removed.
+# random token and the server's port on this machine's loopback (host network), until MCP answers; its tools/list and
+# the instructions its initialize gives compared with blender/server/tools.json, which is what the extension relays (a
+# change to the server's tools or instructions changes that file, the label table and its German); the viewer's routes
+# refused without the token; then the container removed.
 #   scripts/smoke-blender.sh <image>        SMOKE_PORT (default 3870) and SMOKE_NAME (default blender-smoke) change them
 set -eu
 ts() { date "+%Y-%m-%d %H:%M:%S"; }
@@ -26,16 +27,20 @@ until mcp '{"jsonrpc":"2.0","id":1,"method":"ping"}' | grep -q '"result"'; do
   sleep 1
 done
 
-echo "$(ts) comparing tools/list with blender/server/tools.json"
-mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' > "/tmp/$NAME-tools.json"
+echo "$(ts) comparing initialize's instructions and tools/list with blender/server/tools.json"
+mcp '{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' > "/tmp/$NAME-init.json"
+mcp '{"jsonrpc":"2.0","id":3,"method":"tools/list"}' > "/tmp/$NAME-tools.json"
 python3 -c '
 import json, sys
-listed = json.load(open(sys.argv[1]))["result"]
-kept = json.load(open(sys.argv[2]))
-if listed != kept:
+instructions = json.load(open(sys.argv[1]))["result"]["instructions"]
+tools = json.load(open(sys.argv[2]))["result"]["tools"]
+kept = json.load(open(sys.argv[3]))
+if instructions != kept["instructions"]:
+    sys.exit("the image gives other instructions than blender/server/tools.json")
+if tools != kept["tools"]:
     sys.exit("the image lists other tools than blender/server/tools.json")
-print(len(listed["tools"]), "tools, as blender/server/tools.json has them")
-' "/tmp/$NAME-tools.json" "$ROOT/blender/server/tools.json"
+print(len(tools), "tools and the instructions, as blender/server/tools.json has them")
+' "/tmp/$NAME-init.json" "/tmp/$NAME-tools.json" "$ROOT/blender/server/tools.json"
 
 for route in / /api/state /mcp; do
   method=GET; [ "$route" = /mcp ] && method=POST

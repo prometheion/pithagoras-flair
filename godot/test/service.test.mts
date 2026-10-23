@@ -10,7 +10,7 @@ import { openStore } from "../../shared/store.ts";
 import { ACTS, LABELS } from "../src/labels.ts";
 import { displayOf } from "../src/displays.ts";
 import { godotSpec } from "../src/server/spec.ts";
-import { fakeDocker, fakeMcp, fakePortal } from "./fakes.mts";
+import { fakeDocker, fakeMcp, fakePortal, LISTED } from "./fakes.mts";
 
 /**
  * Godot's container through the shared service (shared/service.ts), with Godot's spec: installed on a card, made again
@@ -30,7 +30,7 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed | "real"
   const d = fakeDocker();
   const names: Names = { container: "pithagoras-godot", volume: "pithagoras-godot-data", probe: "pithagoras-godot-probe", port: server.port, image: "ghcr.io/thecodacus/pithagoras-godot:0.1.0", ...options.names };
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${names.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal: fake.portal, prefix: "godot", app: "Godot", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(fake.dataDir, "tools.json") });
+  const tools = relay({ portal: fake.portal, prefix: "godot", app: "Godot", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(fake.dataDir, "tools.json"), listed: LISTED });
   const svc = service({
     portal: fake.portal,
     docker: () => d.docker,

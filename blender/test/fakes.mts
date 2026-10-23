@@ -218,7 +218,8 @@ export function fakePortal(options: { dataDir?: string } = {}) {
 }
 
 /** The Blender server's tools, as the image lists them (server/tools.json). */
-export const TOOLS = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")).tools as { name: string; description: string; inputSchema: Record<string, unknown> }[];
+export const LISTED = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")) as { instructions: string; tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] };
+export const TOOLS = LISTED.tools;
 
 /**
  * An MCP server on loopback that answers as the Blender server does: `initialize`, `ping`, `tools/list` from

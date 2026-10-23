@@ -158,5 +158,8 @@ PITHAGORAS_DIR=$PWD/.pithagoras npm run test:portal -w blender
 docker build -f blender/server/Dockerfile -t pithagoras-blender:dev blender   # the image
 ```
 
-`server/tools.json` is what the server lists (`tools/list`); the release's smoke test compares the image with it, so a
-change to the server's tools changes the fixture, the label table in `src/labels.ts` and its German.
+`server/tools.json` is what the extension relays: the server's tools (`tools/list`) and its MCP instructions, as this
+version was released with them. The model is told what that file says, never what the running server says of itself:
+a tool the server lists that the file does not name is not relayed. The release's smoke test compares the image with
+it, so a change to the server's tools or instructions changes the file, the label table in `src/labels.ts` and its
+German.

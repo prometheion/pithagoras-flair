@@ -1,4 +1,5 @@
 {
+  "instructions": "Tools for a real Godot 4 editor running on a GPU in a container. The person may be watching it live in the Godot panel beside the chat, and one editor is shared by every chat and the person, so check list_projects before you replace what is open. Every editor edit you make (add_node, set_property, attach_script, write_file, ...) happens in that editor and goes through its undo history. Typical loop: list_projects / new_project / open_project -> open_scene or new_scene -> add_node / set_property / attach_script -> save_scene -> check_scripts -> run_project -> screenshot(target=game) and get_output -> stop -> record or export. File paths are res:// paths inside the open project; nothing outside it can be read or written. Property values are JSON: [x, y] for Vector2, \"#rrggbb\" for Color, \"res://...\" to load a resource, {\"type\": \"RectangleShape2D\", \"size\": [32, 32]} for a new resource, {\"$expr\": \"...\"} for any Godot expression. execute_gdscript runs arbitrary GDScript in the editor for anything the other tools do not cover. If the editor stops answering, restart_editor restarts it.",
   "tools": [
     {
       "name": "ping",

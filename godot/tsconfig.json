@@ -9,6 +9,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     // A stylesheet the code imports is the build's to bundle, and has no types.
     "noUncheckedSideEffectImports": false
   },

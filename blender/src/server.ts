@@ -6,6 +6,7 @@ import { proxyUi } from "../../shared/proxy";
 import { relay } from "../../shared/relay";
 import { service } from "../../shared/service";
 import { openStore } from "../../shared/store";
+import listed from "../server/tools.json";
 import { ACTS, LABELS, PREFIX } from "./labels";
 import { blenderRoutes } from "./server/routes";
 import { blenderSpec, names } from "./server/spec";
@@ -26,7 +27,7 @@ export default function blender(portal: ServerPortal) {
   const at = names();
   const docker = () => portal.extensions.use<Docker>("pithagoras-docker")!;
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${at.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal, prefix: PREFIX, app: "Blender", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(data, "tools.json") });
+  const tools = relay({ portal, prefix: PREFIX, app: "Blender", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(data, "tools.json"), listed });
   const svc = service({ portal, docker, app: "Blender", names: at, store, relay: tools, mcp, spec: (plan) => blenderSpec(plan, at.port, at.volume, at.image) });
 
   blenderRoutes(portal, portal.router, svc, { port: at.port, token: () => store.token() });

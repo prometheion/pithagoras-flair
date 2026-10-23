@@ -72,8 +72,11 @@ The server's MCP tools are the extension's own tools in every chat, named `godot
 `godot_open_scene`, `godot_new_scene`, `godot_add_node`, `godot_set_property`, `godot_delete_node`,
 `godot_attach_script`, `godot_save_scene`, `godot_reload`, `godot_run_project`, `godot_run_scene`, `godot_stop`,
 `godot_get_output`, `godot_check_scripts`, `godot_screenshot`, `godot_record`, `godot_export` and
-`godot_execute_gdscript`. Their descriptions are the server's own (`server/tools.json` is what it lists), and the
-server's MCP instructions are said to the agent once.
+`godot_execute_gdscript`. Their descriptions, their schemas and the server's MCP instructions (said to the agent
+once) are the ones this version of the extension was released with, in `server/tools.json`, which the release's smoke
+test holds the image to: never what the running server says of itself, since the agent's code runs in that container.
+A tool the server lists that the file does not name is not relayed, and one it names that the server does not list
+(an older image) is not offered.
 
 They are on in every chat by default. Settings → Tools lists them under **pithagoras-godot**, where the group or a
 single tool can be switched off, or made lazy (offered through the `tools` tool instead of in every request: the 27

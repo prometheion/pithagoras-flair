@@ -14,17 +14,30 @@ import { NotAnswering, type McpClient, type McpTool } from "./mcp";
  * (the service's look every 30 seconds, and after an install or a start) its list is asked for again, and where it
  * changed, the open chats are loaded again once, each then having the tools as they are now.
  *
+ * What the model is told is the extension's own, never what the running server says: the server's tools and its MCP
+ * instructions as this version of the extension was released with them (`listed`, its server/tools.json, which the
+ * release's smoke test holds the image's own list and instructions to). The agent's code runs in that container and
+ * could change what its server says; the descriptions and the instructions go into every chat's system prompt. So
+ * the server's list says only which of the extension's tools it has: a tool it lists that the extension does not
+ * name is not relayed (and is logged), and one the extension names that it does not list (an older image under
+ * `PITHAGORAS_<APP>_IMAGE`) is not offered.
+ *
  * Each tool is named `<prefix>_<the server's name>`: off pi's own names, off the browser's rules, which a name with
- * `browser_` in it is held to, and grouped by eye. What it is told to the model is the server's own: its description,
- * its schema, and the server's MCP instructions as a guideline, which pi prints once however many tools carry it.
- * One call at a time (`sequential`): one server serves every call, on one thread. What a call returns is outside
- * content (`outside`): it comes from a scene or a project, which may have come from anywhere.
+ * `browser_` in it is held to, and grouped by eye. It is told to the model with its description and its schema, and
+ * the instructions as a guideline, which pi prints once however many tools carry it. One call at a time
+ * (`sequential`): one server serves every call, on one thread. What a call returns is outside content (`outside`):
+ * it comes from a scene or a project, which may have come from anywhere.
  */
 
-/** What is kept of the server's list, in `tools.json`. */
-interface Cache {
+/** The server's instructions and tools, as the extension was released with them. */
+export interface Listed {
   instructions: string;
   tools: McpTool[];
+}
+
+/** What is kept of the server's list, in `tools.json`: the names of the tools it listed. */
+interface Cache {
+  tools: string[];
 }
 
 /** A tool's result as pi takes it: text and pictures in the order the server gave them. */
@@ -43,10 +56,12 @@ export interface RelayOptions {
   acts: Record<string, NonNullable<ToolGuard["acts"]>>;
   /** Where the list is kept: `tools.json` in the extension's own folder. */
   cacheFile: string;
+  /** The server's instructions and tools as the extension was released with them: its server/tools.json. */
+  listed: Listed;
 }
 
 export function relay(options: RelayOptions) {
-  const { portal, prefix, mcp, cacheFile } = options;
+  const { portal, prefix, mcp, cacheFile, listed } = options;
   const read = (): Cache | undefined => {
     try {
       const kept = JSON.parse(readFileSync(cacheFile, "utf8")) as Cache;
@@ -74,10 +89,12 @@ export function relay(options: RelayOptions) {
     return parts;
   }
 
+  /** The extension's tools the server listed last, as the extension knows them: nothing while there is no server. */
+  const relayed = (): McpTool[] => (installed && cache ? listed.tools.filter((t) => cache!.tools.includes(t.name)) : []);
+
   function register(pi: any): void {
-    if (!installed || !cache) return;
-    const guideline = cache.instructions.trim();
-    for (const tool of cache.tools) {
+    const guideline = listed.instructions.trim();
+    for (const tool of relayed()) {
       const acts = options.acts[tool.name];
       const guard: ToolGuard = { outside: true, ...(acts ? { acts } : {}) };
       pi.registerTool({
@@ -102,7 +119,7 @@ export function relay(options: RelayOptions) {
     }
   }
 
-  portal.tools.offer(() => (installed && cache ? cache.tools.map((t) => ({ name: `${prefix}_${t.name}`, description: t.description ?? "" })) : []));
+  portal.tools.offer(() => relayed().map((t) => ({ name: `${prefix}_${t.name}`, description: t.description ?? "" })));
   portal.chats.extend((pi) => register(pi));
 
   const reload = () =>
@@ -110,7 +127,7 @@ export function relay(options: RelayOptions) {
 
   return {
     /** The tools as they are registered now, by the server's names: for the routes and the tests. */
-    tools: () => (installed && cache ? cache.tools.map((t) => t.name) : []),
+    tools: () => relayed().map((t) => t.name),
     /**
      * Whether the server's container exists, as the service found it. A change hands the open chats the tools, or
      * takes them away.
@@ -121,13 +138,15 @@ export function relay(options: RelayOptions) {
       if (cache) reload();
     },
     /**
-     * The server answers: its list and its instructions asked for again, and kept where they changed, which loads the
-     * open chats again once.
+     * The server answers: its list asked for again (after `initialize`, as MCP has a client begin), and the names in
+     * it kept where they changed, which loads the open chats again once.
      */
     async refresh(): Promise<void> {
-      const [info, tools] = await Promise.all([mcp.initialize(), mcp.listTools()]);
-      const next: Cache = { instructions: info.instructions, tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
+      await mcp.initialize();
+      const next: Cache = { tools: (await mcp.listTools()).map((t) => t.name) };
       if (cache && JSON.stringify(cache) === JSON.stringify(next)) return;
+      const unknown = next.tools.filter((name) => !listed.tools.some((t) => t.name === name));
+      if (unknown.length) portal.log(`${options.app} lists tools this version of the extension does not have, which are not relayed: ${unknown.join(", ")}`);
       cache = next;
       writeFileSync(`${cacheFile}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
       renameSync(`${cacheFile}.tmp`, cacheFile);

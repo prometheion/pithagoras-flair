@@ -6,6 +6,7 @@ import { proxyUi, uiUpgrade } from "../../shared/proxy";
 import { relay } from "../../shared/relay";
 import { service } from "../../shared/service";
 import { openStore } from "../../shared/store";
+import listed from "../server/tools.json";
 import { ACTS, LABELS, PREFIX } from "./labels";
 import { godotRoutes } from "./server/routes";
 import { displayOf } from "./displays";
@@ -28,7 +29,7 @@ export default function godot(portal: ServerPortal) {
   const at = names();
   const docker = () => portal.extensions.use<Docker>("pithagoras-docker")!;
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${at.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal, prefix: PREFIX, app: "Godot", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(data, "tools.json") });
+  const tools = relay({ portal, prefix: PREFIX, app: "Godot", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(data, "tools.json"), listed });
   const svc = service({
     portal,
     docker,

@@ -73,6 +73,8 @@ test("Install makes and starts the container, and once the server answers its to
   assert.ok(spec.Env.includes(`GODOT_SERVER_TOKEN=${token()}`));
   assert.ok(spec.Env.includes(`GODOT_SERVER_PORT=${server.port}`));
   assert.equal(spec.Image, "flairtest-pithagoras-godot:0.1.0");
+  // The tools are asked for once the server answers, in the background.
+  for (let i = 0; i < 200 && !fake.registered().length; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(fake.registered().length, TOOLS.length);
   assert.ok(fake.listed().some((t) => t.name === "godot_screenshot"));
   assert.ok(fake.counts.reloads >= 1);

@@ -9,7 +9,7 @@ import { service, SPEC_LABEL, type Names } from "../../shared/service.ts";
 import { openStore } from "../../shared/store.ts";
 import { ACTS, LABELS } from "../src/labels.ts";
 import { blenderSpec } from "../src/server/spec.ts";
-import { fakeMcp, fakePortal, memoryDocker, TOOLS } from "./fakes.mts";
+import { fakeMcp, fakePortal, memoryDocker, LISTED, TOOLS } from "./fakes.mts";
 
 /** The Blender server's container through Docker: installed, started, stopped, made again, removed, looked after. */
 
@@ -23,7 +23,7 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed } = {}) 
   const d = memoryDocker();
   const names: Names = { container: "pithagoras-blender", volume: "pithagoras-blender-data", probe: "pithagoras-blender-probe", port: server.port, image: "ghcr.io/thecodacus/pithagoras-blender:0.1.0", ...options.names };
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${names.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal: fake.portal, prefix: "blender", app: "Blender", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(fake.dataDir, "tools.json") });
+  const tools = relay({ portal: fake.portal, prefix: "blender", app: "Blender", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(fake.dataDir, "tools.json"), listed: LISTED });
   const probes: (string | undefined)[] = [];
   const svc = service({
     portal: fake.portal,
