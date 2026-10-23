@@ -30,7 +30,7 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed | "real"
   const d = fakeDocker();
   const names: Names = { container: "pithagoras-godot", volume: "pithagoras-godot-data", probe: "pithagoras-godot-probe", port: server.port, image: "ghcr.io/thecodacus/pithagoras-godot:0.1.0", ...options.names };
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${names.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal: fake.portal, prefix: "godot", app: "Godot", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(fake.dataDir, "tools.json"), listed: LISTED });
+  const tools = relay({ portal: fake.portal, prefix: "godot", app: "Godot", mcp, labels: LABELS, acts: ACTS, bundled: LISTED, installedFile: path.join(fake.dataDir, "installed") });
   const svc = service({
     portal: fake.portal,
     docker: () => d.docker,
@@ -41,7 +41,7 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed | "real"
     mcp,
     spec: (plan) => godotSpec(plan, { port: names.port, volume: names.volume, image: names.image, display: displayOf(store.setting("display")) }),
     ...(options.probed === "real" ? {} : { probe: async () => (options.probed as Probed | undefined) ?? { cards: [CARD0, CARD1], optix: "toolkit", error: "" } }),
-    namespace: () => "net:[4026532001]",
+    netns: () => "net:[4026532001]",
   });
   return { fake, store, server, d, names, svc };
 }

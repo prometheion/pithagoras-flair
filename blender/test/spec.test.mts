@@ -33,6 +33,16 @@ test("it is on the network it is given, comes back unless stopped, and has its t
   assert.equal(spec.Image, IMAGE);
 });
 
+test("Blender, which runs the agent's code, has none of the kernel's capabilities and cannot gain privileges", () => {
+  const spec = made();
+  assert.deepEqual(spec.HostConfig.CapDrop, ["ALL"]);
+  assert.equal(spec.HostConfig.CapAdd, undefined);
+  assert.deepEqual(spec.HostConfig.SecurityOpt, ["no-new-privileges:true"]);
+  assert.equal(spec.HostConfig.Privileged, undefined);
+  // The user is the image's own (server/Dockerfile: USER blender), which the release's smoke test holds the image to.
+  assert.equal(spec.User, undefined);
+});
+
 test("the OptiX weights are bound from the host only where the toolkit does not mount them", () => {
   const nvoptix = [{ Type: "bind", Source: "/usr/share/nvidia/nvoptix.bin", Target: "/usr/share/nvidia/nvoptix.bin", ReadOnly: true }];
   assert.deepEqual(made({ optix: "host" as never }).HostConfig.Mounts, nvoptix);

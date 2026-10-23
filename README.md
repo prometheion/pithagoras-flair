@@ -19,4 +19,4 @@ The extensions are npm workspaces of this repository: `npm ci` at its root insta
 
 ## License
 
-Apache-2.0, as Pithagoras. An extension that runs other software in a container says what that software's licences are in its own README and NOTICE.
+Apache-2.0, as Pithagoras, except `blender/server/server.py`, which runs inside Blender and is GPL-3.0-or-later ([blender/server/LICENSE](blender/server/LICENSE)). Each extension's README and NOTICE say under which licences what its image redistributes is, and where their sources are.

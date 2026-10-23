@@ -32,12 +32,15 @@ interface Held {
   restarts: number;
   startedAt: string;
   log: string;
+  /** The network namespace its process is in, as `readlink /proc/self/ns/net` in it says: the portal's as it started. */
+  netns: string;
 }
 
 /**
  * Docker for one extension, in memory: what it was asked, in order (`calls`), each container's create body, the
  * volumes and images there are. `refuseGpu` refuses to start a container that asks for a GPU, as Docker does without
- * the NVIDIA runtime; `onStart` says what a started container does (the probe prints and exits).
+ * the NVIDIA runtime; `onStart` says what a started container does (the probe prints and exits). `namespace` is the
+ * portal's network namespace, which a container is joined to as it starts, and keeps until it starts again.
  */
 export function memoryDocker(options: { owner?: string } = {}) {
   const owner = options.owner ?? EXTENSION;
@@ -54,6 +57,7 @@ export function memoryDocker(options: { owner?: string } = {}) {
     /** What a started container does: the probe prints this and exits. */
     onStart: undefined as ((c: Held) => void) | undefined,
     pullFails: undefined as string | undefined,
+    namespace: "net:[4026531840]",
   };
   const status = (status: number, message: string) => Object.assign(new Error(message), { status });
   const info = (c: Held): ContainerInfo => ({ name: c.name, id: c.id, image: c.spec.Image, state: c.state, status: c.state, owner: c.owner, labels: (c.spec.Labels as Record<string, string>) ?? {} });
@@ -82,7 +86,7 @@ export function memoryDocker(options: { owner?: string } = {}) {
       async create(name, spec) {
         calls.push(`create ${name}`);
         if (mine(name)) containers.delete(name);
-        const made: Held = { id: `id${++ids}`, name, owner, spec: structuredClone(spec), state: "created", exitCode: 0, restarts: 0, startedAt: "0001-01-01T00:00:00Z", log: "" };
+        const made: Held = { id: `id${++ids}`, name, owner, spec: structuredClone(spec), state: "created", exitCode: 0, restarts: 0, startedAt: "0001-01-01T00:00:00Z", log: "", netns: "" };
         containers.set(name, made);
         return info(made);
       },
@@ -96,6 +100,7 @@ export function memoryDocker(options: { owner?: string } = {}) {
         c.state = "running";
         c.restarts = 0;
         c.startedAt = new Date((clock += 1000)).toISOString();
+        c.netns = state.namespace;
         state.onStart?.(c);
       },
       async stop(name) {
@@ -124,7 +129,12 @@ export function memoryDocker(options: { owner?: string } = {}) {
         };
       },
       async update() {},
-      async exec() {
+      async exec(name, cmd) {
+        calls.push(`exec ${name} ${cmd.join(" ")}`);
+        const c = mine(name);
+        if (!c) throw status(404, `There is no container ${name}`);
+        if (c.state !== "running") throw status(409, `Container ${name} is not running`);
+        if (cmd.join(" ") === "readlink /proc/self/ns/net") return { output: `${c.netns}\n`, exitCode: 0, timedOut: false };
         return { output: "", exitCode: 0, timedOut: false };
       },
       async adopt(name) {
@@ -150,7 +160,7 @@ export function memoryDocker(options: { owner?: string } = {}) {
     },
   };
   /** A container made by someone else, with that owner ("" for nobody's). */
-  const foreign = (name: string, by: string) => containers.set(name, { id: `id${++ids}`, name, owner: by, spec: { Image: "other" }, state: "running", exitCode: 0, restarts: 0, startedAt: "", log: "" });
+  const foreign = (name: string, by: string) => containers.set(name, { id: `id${++ids}`, name, owner: by, spec: { Image: "other" }, state: "running", exitCode: 0, restarts: 0, startedAt: "", log: "", netns: "" });
   return { docker, containers, volumes, images, calls, state, foreign };
 }
 
@@ -217,19 +227,21 @@ export function fakePortal(options: { dataDir?: string } = {}) {
   };
 }
 
-/** The Blender server's tools, as the image lists them (server/tools.json). */
-export const LISTED = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")) as { instructions: string; tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] };
-export const TOOLS = LISTED.tools;
+/** The Blender server's tools and instructions, as the image lists them and the extension registers them (server/tools.json). */
+export const BUNDLED = JSON.parse(readFileSync(new URL("../server/tools.json", import.meta.url), "utf8")) as { instructions: string; tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] };
+export const TOOLS = BUNDLED.tools;
 
 /**
  * An MCP server on loopback that answers as the Blender server does: `initialize`, `ping`, `tools/list` from
- * tools.json and `tools/call` as a test says (`answers`), each with the token or a 401. Every request is kept.
+ * tools.json and `tools/call` as a test says (`answers`), each with the token or a 401. Every request is kept. While
+ * `down`, nothing answers: a connection is dropped, as on a loopback the server is not on.
  */
 export async function fakeMcp(token: string) {
   const seen: { method: string; params: any; auth: string | undefined }[] = [];
   const answers: Record<string, (args: any) => unknown> = {};
-  const state = { instructions: "Use the Blender tools.", tools: TOOLS as unknown[], hang: false };
+  const state = { instructions: BUNDLED.instructions, tools: TOOLS as unknown[], hang: false, down: false };
   const server = http.createServer((req, res) => {
+    if (state.down) return void req.socket.destroy();
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {

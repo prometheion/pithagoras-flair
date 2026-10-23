@@ -167,7 +167,7 @@ export async function fakeMcp(token: string | (() => string)) {
   /** The paths it was asked for besides /mcp and /api/state, in order. */
   const served: string[] = [];
   const answers = new Map<string, any>();
-  let instructions = "Tools for a real Godot 4 editor.";
+  let instructions = LISTED.instructions;
   let tools = TOOLS;
   const server = http.createServer((req, res) => {
     let body = "";

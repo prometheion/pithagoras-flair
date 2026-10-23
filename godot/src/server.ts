@@ -1,15 +1,16 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ServerPortal } from "@pithagoras/extension-api/server";
 import type { Docker } from "../../shared/docker-api";
 import { mcpClient } from "../../shared/mcp";
 import { proxyUi, uiUpgrade, writesFromHere } from "../../shared/proxy";
-import { relay } from "../../shared/relay";
+import { relay, type Bundled } from "../../shared/relay";
 import { service } from "../../shared/service";
 import { openStore } from "../../shared/store";
-import listed from "../server/tools.json";
+import bundled from "../server/tools.json";
 import { ACTS, LABELS, PREFIX } from "./labels";
-import { pages } from "./server/pages";
+import { stream } from "./server/pages";
 import { godotRoutes } from "./server/routes";
 import { displayOf } from "./displays";
 import { godotSpec, names } from "./server/spec";
@@ -26,7 +27,11 @@ import { godotSpec, names } from "./server/spec";
  * the server's. Every 30 seconds it looks after the container, as Voice does (shared/service.ts). Its token, its card,
  * its screen size and the server's last list of tools are in its own folder (`portal.dataDir()`).
  */
-/** The pages the extension serves (the viewer, and Selkies' web client in stream/): pages/, one folder above this module, as src/ in the repository and lib/ in the package both are. */
+/**
+ * The pages the extension serves, the only ones that run on the portal's origin: the viewer (pages/viewer.html) and
+ * Selkies' web client (pages/stream). pages/ is one folder above this module, as src/ in the repository and lib/ in the
+ * package both are.
+ */
 const PAGES = fileURLToPath(new URL("../pages/", import.meta.url));
 
 export default function godot(portal: ServerPortal) {
@@ -35,7 +40,7 @@ export default function godot(portal: ServerPortal) {
   const at = names();
   const docker = () => portal.extensions.use<Docker>("pithagoras-docker")!;
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${at.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal, prefix: PREFIX, app: "Godot", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(data, "tools.json"), listed });
+  const tools = relay({ portal, prefix: PREFIX, app: "Godot", mcp, bundled: bundled as Bundled, labels: LABELS, acts: ACTS, installedFile: path.join(data, "installed") });
   const svc = service({
     portal,
     docker,
@@ -50,8 +55,8 @@ export default function godot(portal: ServerPortal) {
   // Before every route: what installs, starts, stops, removes or changes anything comes from the portal's own pages.
   portal.router.use(writesFromHere);
   godotRoutes(portal, portal.router, svc, store, { port: at.port });
-  const proxy = { port: () => at.port, token: () => store.token(), notAnswering: "Godot antwortet nicht. / Godot is not answering." };
-  portal.router.use("/ui", pages(PAGES));
+  const proxy = { port: () => at.port, token: () => store.token(), page: readFileSync(path.join(PAGES, "viewer.html")), notAnswering: "Godot antwortet nicht. / Godot is not answering." };
+  portal.router.use("/ui", stream(PAGES));
   portal.router.use("/ui", proxyUi(proxy));
   // The editor's stream is a WebSocket: the portal checks the sign-in and the page, and hands it over here.
   portal.http.upgrade(uiUpgrade(proxy));

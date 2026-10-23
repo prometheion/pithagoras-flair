@@ -44,11 +44,40 @@ export const LABELS: Record<string, string> = {
 };
 
 /**
- * The tools whose calls run code, or write code the editor runs: a GDScript file loads as soon as it is written, a
- * `@tool` script runs in the editor, and a game is a program. Once the conversation has read a result the guard flags
- * as a likely prompt injection, the guard holds each of their calls as an upload (it asks the person first, or refuses
- * where nobody can answer), since that code runs in the portal's network namespace (see the README on what it reaches).
+ * The guard rules every call of each tool is the shape of, decided for each (`[]`: none; the relay holds a tool this
+ * table does not name to `upload`). The ones that run code, or write code the editor runs, are uploads: a GDScript file
+ * loads as soon as it is written, a `@tool` script runs in the editor, and a game is a program. Once the conversation
+ * has read a result the guard flags as a likely prompt injection, the guard asks the person before each of their
+ * calls, or refuses where nobody can answer, since that code runs in the portal's network namespace (see the README on
+ * what it reaches). The others read the project or the editor, or change the project through the editor's own
+ * operations, in the container's data folder.
  */
-export const ACTS: Record<string, "upload"[]> = Object.fromEntries(
-  ["write_file", "attach_script", "run_project", "run_scene", "record", "execute_gdscript"].map((name) => [name, ["upload"]]),
-);
+export const ACTS: Record<string, "upload"[]> = {
+  ping: [],
+  list_projects: [],
+  new_project: [],
+  open_project: [],
+  restart_editor: [],
+  list_files: [],
+  read_file: [],
+  write_file: ["upload"],
+  delete_file: [],
+  get_scene_tree: [],
+  open_scene: [],
+  new_scene: [],
+  add_node: [],
+  set_property: [],
+  delete_node: [],
+  attach_script: ["upload"],
+  save_scene: [],
+  reload: [],
+  run_project: ["upload"],
+  run_scene: ["upload"],
+  stop: [],
+  get_output: [],
+  check_scripts: [],
+  screenshot: [],
+  record: ["upload"],
+  export: [],
+  execute_gdscript: ["upload"],
+};

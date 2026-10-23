@@ -4,12 +4,13 @@ import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import { proxyUi, uiUpgrade } from "../../shared/proxy.ts";
+import { proxyUi, uiUpgrade, writesFromHere } from "../../shared/proxy.ts";
 
 /**
- * The server's pages through the portal, at /api/x/pithagoras-godot/ui/: the portal's cookie and the page's own
- * credentials left out, the server's token added, writes only from the portal's own page, the answers framed only by
- * the portal and never setting a cookie on its origin, and the stream's WebSocket passed on both ways. That the portal asks for its sign-in first, of every
+ * What the viewer asks of the server, through the portal at /api/x/pithagoras-godot/ui/: the portal's cookie and the
+ * page's own credentials left out, the server's token added, writes only from the portal's own page, the answers framed
+ * only by the portal, run as no page of the portal's and never setting a cookie on its origin, the viewer the
+ * extension's own, and the stream's WebSocket passed on both ways. That the portal asks for its sign-in first, of every
  * request and stream under /api/x, is core's (its own tests).
  */
 
@@ -37,11 +38,12 @@ upstream.listen(0, "127.0.0.1");
 await new Promise((resolve) => upstream.once("listening", resolve));
 let port = (upstream.address() as AddressInfo).port;
 
-const options = { port: () => port, token: () => "server-token", notAnswering: "Godot antwortet nicht. / Godot is not answering." };
+const options = { port: () => port, token: () => "server-token", page: Buffer.from("<p>the extension's viewer</p>"), notAnswering: "Godot antwortet nicht. / Godot is not answering." };
 const ui = proxyUi(options);
 const stream = uiUpgrade(options);
 // Mounted as the portal mounts an extension's routes: /api/x/<package>, then the router's /ui.
 const router = express.Router();
+router.use(writesFromHere);
 router.use("/ui", ui);
 const app = express().use("/api/x/pithagoras-godot", router);
 const portal = http.createServer(app);
@@ -85,14 +87,18 @@ test("a page goes on without the portal's cookie, the page's credentials or wher
   assert.equal(asked.headers.host, `127.0.0.1:${port}`);
 });
 
-test("only the portal's own pages may frame it, nothing is taken for another type, a file runs no script, and no cookie is set", async () => {
-  const page = await fetch(`${at}/ui/`);
-  assert.equal(page.headers.get("set-cookie"), null, "an answer is the portal's origin's: a cookie from the container would sit beside the portal's own");
-  assert.equal(page.headers.get("content-security-policy"), "frame-ancestors 'self'");
-  assert.equal(page.headers.get("x-content-type-options"), "nosniff");
-  assert.equal(seen.requests.at(-1)!.url, "/");
+test("the viewer is the extension's; every answer of the server's is framed only by the portal, runs as no page of it, and sets no cookie", async () => {
+  const before = seen.requests.length;
+  const viewer = await fetch(`${at}/ui/`);
+  assert.equal(await viewer.text(), "<p>the extension's viewer</p>");
+  assert.equal(viewer.headers.get("content-security-policy"), "frame-ancestors 'self'");
+  assert.equal(seen.requests.length, before, "the server is not asked for it");
+  const answer = await fetch(`${at}/ui/api/state`);
+  assert.equal(answer.headers.get("set-cookie"), null, "an answer is the portal's origin's: a cookie from the container would sit beside the portal's own");
+  assert.equal(answer.headers.get("content-security-policy"), "frame-ancestors 'self', sandbox");
+  assert.equal(answer.headers.get("x-content-type-options"), "nosniff");
   const own = await fetch(`${at}/ui/own-policy`);
-  assert.equal(own.headers.get("content-security-policy"), "default-src 'self', frame-ancestors 'self'");
+  assert.equal(own.headers.get("content-security-policy"), "default-src 'self', frame-ancestors 'self', sandbox");
   const file = await fetch(`${at}/ui/files/renders/game/1/movie.mp4`);
   assert.equal(file.headers.get("content-security-policy"), "frame-ancestors 'self', sandbox");
 });
@@ -161,7 +167,7 @@ test("a server that does not answer is said, in both languages", async () => {
   const was = port;
   port = 1;
   try {
-    const page = await fetch(`${at}/ui/`);
+    const page = await fetch(`${at}/ui/api/state`);
     assert.equal(page.status, 502);
     assert.equal(await page.text(), "Godot antwortet nicht. / Godot is not answering.");
   } finally {

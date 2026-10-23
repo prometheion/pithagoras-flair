@@ -3,8 +3,8 @@ import type { Duplex } from "node:stream";
 import type { NextFunction, Request, Response } from "express";
 
 /**
- * The server's own pages (its viewer, its API, the files it serves, and for Godot its stream), served through the
- * portal at /api/x/<package>/ui/…, behind the portal's sign-in.
+ * The viewer beside a chat, served through the portal at /api/x/<package>/ui/…, behind the portal's sign-in: the
+ * extension's own page, and what the server answers it (its API, the files it serves, and for Godot its stream).
  *
  * Why a proxy and not a link to the server's port: the server binds the portal's loopback alone, so nothing else can
  * reach it, and the person never signs in to it. The portal decides who they are before anything is proxied (every
@@ -12,12 +12,11 @@ import type { NextFunction, Request, Response } from "express";
  * and the proxy adds the server's token on the way. The container is never given the portal's cookie, or anything the
  * page sent as a credential. Browser's proxy works the same way.
  *
- * The pages run on the portal's own origin, so a script in them could call the portal's API as the person. The
- * servers put nothing they were given into a page unescaped, and nothing that runs code a project or the agent wrote
- * is served through here. What a request may change is checked too: the portal's cookie is SameSite=Lax, which a page
- * on another port of the same address is still sent, and these pages open projects, take uploads and run code. So a
- * request that is not a read is refused unless it comes from the portal's own pages (`fromHere`), by the rule core
- * holds a stream to.
+ * What is served here is on the portal's own origin, where a script could call the portal's API as the person. The
+ * server runs code the agent writes, in the very process that answers here, so what it answers is never let run
+ * there: the page at /ui/ is the extension's own (`page`), from its package, and every answer of the server's is
+ * sandboxed (`answered`), so that one opened as a page of its own runs no script, in an origin of its own, with no way
+ * to the portal's. The extension's page reads the server's answers as data, and puts nothing of them into the page unescaped.
  */
 
 export interface ProxyOptions {
@@ -25,6 +24,8 @@ export interface ProxyOptions {
   port: () => number;
   /** The server's token, sent as `Authorization: Bearer`. */
   token: () => string;
+  /** The extension's own page, served at /ui/ in place of anything the server would answer there. */
+  page: Buffer;
   /** What a refused connection says: "Blender antwortet nicht. / Blender is not answering." */
   notAnswering: string;
 }
@@ -44,18 +45,21 @@ export function forwarded(headers: http.IncomingHttpHeaders, options: ProxyOptio
 const FRAME_ANCESTORS = "frame-ancestors 'self'";
 
 /**
- * What the server answered, with what it does not say for itself: only the portal's own pages may frame it, and a
- * browser takes each answer as the type it says it is. A file the server serves (`/files/…`: a render, an upload, an
- * export) is also kept from running anything if it is opened on its own (`sandbox`). Each policy is added to one of
- * the server's own as a second one, so that both apply. A cookie is never passed on: the answer is the portal's
- * origin's, where a cookie would sit beside the portal's own, and the servers have none to set.
+ * What the server answered, with what it does not say for itself: only the portal's own pages may frame it, a browser
+ * takes each answer as the type it says it is, and nothing of it runs on the portal's origin (`sandbox`): an answer
+ * opened as a page of its own runs no script, in an origin of its own. Each policy is added to one of the server's own as a
+ * second one, so that both apply. A cookie is never passed on: the answer is the portal's origin's, where a cookie
+ * would sit beside the portal's own, and the servers have none to set.
  */
-export function answered(headers: http.IncomingHttpHeaders, upstreamPath: string): http.OutgoingHttpHeaders {
+export function answered(headers: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
   const { "set-cookie": _cookie, ...rest } = headers;
   const own = rest["content-security-policy"];
-  const ours = upstreamPath.startsWith("/files/") ? `${FRAME_ANCESTORS}, sandbox` : FRAME_ANCESTORS;
+  const ours = `${FRAME_ANCESTORS}, sandbox`;
   return { ...rest, "content-security-policy": own ? `${own}, ${ours}` : ours, "x-content-type-options": "nosniff" };
 }
+
+/** The extension's own page, as it is sent: framed only by the portal's pages, taken as HTML, asked for anew each time. */
+const PAGE_HEADERS = { "content-type": "text/html; charset=utf-8", "content-security-policy": FRAME_ANCESTORS, "x-content-type-options": "nosniff", "cache-control": "no-cache" };
 
 /**
  * Is this request from one of the portal's own pages? Its `Origin` names the host it was made to (`Host`, or the
@@ -99,26 +103,28 @@ export function writesFromHere(req: Request, res: Response, next: NextFunction):
 
 /**
  * The route half, for every method under /ui (`portal.router.use("/ui", proxyUi(…))`). Express strips the mount
- * path, so `req.url` is already the server's own. Bodies are piped as they come (the portal reads none for an
- * extension's routes), so an upload of a project and a picture of the viewport pass untouched.
+ * path, so `req.url` is already the server's own. /ui/ itself is the extension's page; everything else is the
+ * server's. Bodies are piped as they come (the portal reads none for an extension's routes), so an upload of a
+ * project and a picture of the viewport pass untouched.
  */
 export function proxyUi(options: ProxyOptions) {
   return (req: Request, res: Response): void => {
-    // The pages load what they need relative to where they are, so they are at /ui/, with the slash.
+    // The page loads what it needs relative to where it is, so it is at /ui/, with the slash.
     const [pathname, ...query] = req.originalUrl.split("?");
     if (req.path === "/" && !pathname.endsWith("/")) {
       res.redirect(`ui/${query.length ? `?${query.join("?")}` : ""}`);
       return;
     }
-    if (!READS.has(req.method) && !fromHere(req.headers)) {
-      res.status(403).json({ error: "Only the portal's own pages may change this." });
+    if (req.path === "/" && (req.method === "GET" || req.method === "HEAD")) {
+      res.writeHead(200, { ...PAGE_HEADERS, "content-length": options.page.length });
+      res.end(options.page);
       return;
     }
     const path = req.url || "/";
     const proxied = http.request(
       { host: UPSTREAM_HOST, port: options.port(), path, method: req.method, headers: forwarded(req.headers, options) },
       (upstream) => {
-        res.writeHead(upstream.statusCode ?? 502, answered(upstream.headers, path));
+        res.writeHead(upstream.statusCode ?? 502, answered(upstream.headers));
         upstream.pipe(res);
       },
     );

@@ -4,9 +4,11 @@ import { useBlenderState } from "./state";
 import { portal, SETTINGS_PAGE, t } from "../portal";
 
 /**
- * The Blender viewer beside a chat: the server's own page (its live viewport, rendered by Blender from where the
- * person looks, its outliner, renders and projects), in a frame through the server half, so it is behind the
- * portal's sign-in and the person never signs in to Blender. It is drawn in the page's language (`?lang=`).
+ * The Blender viewer beside a chat: the extension's own page (src/viewer.html), which shows what the server says (its
+ * live viewport, rendered by Blender from where the person looks, its outliner, renders and projects), in a frame
+ * through the server half, so it is behind the portal's sign-in and the person never signs in to Blender. It is drawn
+ * in the page's language (`?lang=`). The page is the extension's and not the server's, as the server runs code the
+ * agent writes: what the server answers is never let run on the portal's origin (shared/proxy.ts).
  *
  * While the server does not run, it says why, and where to start it. The panel's body is drawn anew for each chat,
  * so the frame loads again on a chat switch: the viewer reads all it shows from the server, so only its orbit camera

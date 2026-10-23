@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { openStore } from "../../shared/store.ts";
@@ -38,7 +39,7 @@ test("Settings → Blender through install to running, with its tools in every c
   assert.equal(hardware.body.optix, "host");
   assert.equal(hardware.body.pinned, false);
 
-  assert.equal((await json(`${at}/install`, { method: "POST" })).status, 200);
+  assert.equal((await json(`${at}/install`, { method: "POST", headers: { "sec-fetch-site": "same-origin" } })).status, 200);
   let state;
   for (let i = 0; i < 200; i++) {
     state = (await json(`${at}/state`)).body;
@@ -52,18 +53,29 @@ test("Settings → Blender through install to running, with its tools in every c
   assert.equal(fake.registered().length, TOOLS.length);
   assert.equal(fake.offered().length, TOOLS.length);
 
-  // The viewer, through the proxy, with the server's token.
-  const page = await fetch(`${at}/ui/api/state`);
-  assert.equal(page.status, 200);
-  assert.equal((await page.json()).path, "/api/state");
+  // The viewer: the extension's own page, and the server's API through the proxy, with the server's token.
+  const page = await fetch(`${at}/ui/`);
+  assert.equal(await page.text(), readFileSync(new URL("../src/viewer.html", import.meta.url), "utf8"));
+  const api = await fetch(`${at}/ui/api/state`);
+  assert.equal(api.status, 200);
+  assert.equal((await api.json()).path, "/api/state");
+  assert.match(api.headers.get("content-security-policy")!, /sandbox/);
 
-  assert.equal((await json(`${at}/gpu`, { method: "PUT", body: JSON.stringify({ gpu: 3 }) })).status, 400);
-  assert.equal((await json(`${at}/gpu`, { method: "PUT", body: JSON.stringify({ gpu: "GPU-gone" }) })).body.error, "That card is not on this host.");
+  // A change from another page of the same site is refused on every route; the portal's own pages are let through.
+  const host = new URL(at).host;
+  assert.equal((await json(`${at}/stop`, { method: "POST", headers: { origin: `http://${host.replace(/:\d+$/, ":9999")}` } })).status, 403);
+  assert.equal((await json(`${at}/uninstall`, { method: "POST", headers: { origin: "http://evil.example" }, body: JSON.stringify({ removeData: true }) })).status, 403);
+  assert.equal((await json(`${at}/gpu`, { method: "PUT", headers: { "sec-fetch-site": "same-site" }, body: JSON.stringify({ gpu: "" }) })).status, 403);
+  assert.equal((await json(`${at}/state`)).body.state, "running");
 
-  assert.equal((await json(`${at}/stop`, { method: "POST" })).status, 200);
+  const here = { origin: `http://${host}` };
+  assert.equal((await json(`${at}/gpu`, { method: "PUT", headers: here, body: JSON.stringify({ gpu: 3 }) })).status, 400);
+  assert.equal((await json(`${at}/gpu`, { method: "PUT", headers: here, body: JSON.stringify({ gpu: "GPU-gone" }) })).body.error, "That card is not on this host.");
+
+  assert.equal((await json(`${at}/stop`, { method: "POST", headers: here })).status, 200);
   assert.equal((await json(`${at}/state`)).body.state, "stopped");
-  assert.equal((await json(`${at}/uninstall`, { method: "POST", body: JSON.stringify({ removeData: "yes" }) })).status, 400);
-  assert.equal((await json(`${at}/uninstall`, { method: "POST", body: JSON.stringify({ removeData: true }) })).status, 200);
+  assert.equal((await json(`${at}/uninstall`, { method: "POST", headers: here, body: JSON.stringify({ removeData: "yes" }) })).status, 400);
+  assert.equal((await json(`${at}/uninstall`, { method: "POST", headers: here, body: JSON.stringify({ removeData: true }) })).status, 200);
   assert.equal((await json(`${at}/state`)).body.state, "absent");
   assert.equal(d.volumes.size, 0);
   assert.deepEqual(fake.registered(), []);

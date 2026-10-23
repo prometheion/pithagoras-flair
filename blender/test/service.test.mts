@@ -9,7 +9,7 @@ import { service, SPEC_LABEL, type Names } from "../../shared/service.ts";
 import { openStore } from "../../shared/store.ts";
 import { ACTS, LABELS } from "../src/labels.ts";
 import { blenderSpec } from "../src/server/spec.ts";
-import { fakeMcp, fakePortal, memoryDocker, LISTED, TOOLS } from "./fakes.mts";
+import { BUNDLED, fakeMcp, fakePortal, memoryDocker, TOOLS } from "./fakes.mts";
 
 /** The Blender server's container through Docker: installed, started, stopped, made again, removed, looked after. */
 
@@ -23,7 +23,7 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed } = {}) 
   const d = memoryDocker();
   const names: Names = { container: "pithagoras-blender", volume: "pithagoras-blender-data", probe: "pithagoras-blender-probe", port: server.port, image: "ghcr.io/thecodacus/pithagoras-blender:0.1.0", ...options.names };
   const mcp = mcpClient({ url: () => `http://127.0.0.1:${names.port}/mcp`, token: () => store.token() });
-  const tools = relay({ portal: fake.portal, prefix: "blender", app: "Blender", mcp, labels: LABELS, acts: ACTS, cacheFile: path.join(fake.dataDir, "tools.json"), listed: LISTED });
+  const tools = relay({ portal: fake.portal, prefix: "blender", app: "Blender", mcp, bundled: BUNDLED, labels: LABELS, acts: ACTS, installedFile: path.join(fake.dataDir, "installed") });
   const probes: (string | undefined)[] = [];
   const svc = service({
     portal: fake.portal,
@@ -38,6 +38,7 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed } = {}) 
       probes.push(pinned);
       return options.probed ?? { cards: [CARD0, CARD1], optix: "host", error: "" };
     },
+    netns: () => d.state.namespace,
   });
   return { fake, store, server, d, names, svc, tools, probes };
 }
@@ -224,4 +225,43 @@ test("the token is made once, kept for the portal's user alone, and given to the
   assert.equal(openStore(fake.dataDir).token(), token);
   const { statSync } = await import("node:fs");
   assert.equal(statSync(path.join(fake.dataDir, "settings.json")).mode & 0o777, 0o600);
+});
+
+test("a server left in the namespace of the portal's last run is started again, and joins the portal's", async () => {
+  const { d, svc, server, fake } = await setup();
+  await svc.install();
+  await settled(svc);
+  assert.equal((await svc.status()).state, "running");
+  // The portal's container started again under the same id: a namespace of its own, which the server is not in, so
+  // nothing answers on the portal's loopback.
+  d.state.namespace = "net:[4026532999]";
+  server.state.down = true;
+  d.state.onStart = (c) => {
+    if (c.netns === d.state.namespace) server.state.down = false;
+  };
+  assert.equal((await svc.status()).state, "starting", "Docker says it runs, and it does not answer");
+  const creates = d.calls.filter((c) => c === "create pithagoras-blender").length;
+  await svc.maintain();
+  await settled(svc);
+  assert.deepEqual(d.calls.slice(-3), ["exec pithagoras-blender readlink /proc/self/ns/net", "stop pithagoras-blender", "start pithagoras-blender"]);
+  assert.equal(d.calls.filter((c) => c === "create pithagoras-blender").length, creates, "the container is kept");
+  assert.equal((await svc.status()).state, "running");
+  assert.match(fake.logs.join("\n"), /network namespace the portal is no longer in/);
+});
+
+test("a server that is starting in the portal's namespace is left to start, and one that answers is not looked into", async () => {
+  const { d, svc, server } = await setup();
+  await svc.install();
+  await settled(svc);
+  await svc.maintain();
+  assert.ok(!d.calls.some((c) => c.startsWith("exec")), "it answers: nothing is run in it");
+  server.state.down = true;
+  await svc.maintain();
+  assert.equal(d.calls.at(-1), "exec pithagoras-blender readlink /proc/self/ns/net");
+  assert.ok(!d.calls.includes("stop pithagoras-blender"), "the same namespace: it is starting, and is left to");
+  // One somebody stopped is not looked into, nor started.
+  await svc.stop();
+  const calls = d.calls.length;
+  await svc.maintain();
+  assert.deepEqual(d.calls.slice(calls), []);
 });

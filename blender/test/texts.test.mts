@@ -4,7 +4,7 @@ import path from "node:path";
 import { test } from "node:test";
 import ts from "typescript";
 import { de } from "../src/de.ts";
-import { LABELS } from "../src/labels.ts";
+import { ACTS, LABELS } from "../src/labels.ts";
 import { TOOLS } from "./fakes.mts";
 
 /**
@@ -54,11 +54,12 @@ test("every text the browser half shows has its German, and de.ts has nothing th
   for (const [english, german] of Object.entries(de)) assert.deepEqual(words(String(german)), words(english), english);
 });
 
-test("every tool the server lists has a label, and every label is a tool's", () => {
+test("every tool the server lists has a label and a guard rule decided for it, and each is a tool's", () => {
   assert.deepEqual(Object.keys(LABELS).sort(), TOOLS.map((t) => t.name).sort());
+  assert.deepEqual(Object.keys(ACTS).sort(), TOOLS.map((t) => t.name).sort());
 });
 
-const viewer = fs.readFileSync(new URL("../server/viewer.html", import.meta.url), "utf8");
+const viewer = fs.readFileSync(new URL("../src/viewer.html", import.meta.url), "utf8");
 /** The viewer's two tables, read as the page reads them. */
 const tables = (() => {
   const start = viewer.indexOf("const TEXTS = {");

@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
 import { mcpClient, NotAnswering } from "../../shared/mcp.ts";
-import { fakeMcp, TOOLS } from "./fakes.mts";
+import { BUNDLED, fakeMcp, TOOLS } from "./fakes.mts";
 
 /** The client of the server's MCP endpoint: JSON-RPC over plain HTTP, with the token. */
 
@@ -12,7 +12,7 @@ test("every request carries the token, and the server's tools and instructions a
   const mcp = mcpClient({ url: () => server.url, token: () => "s3cret" });
   assert.equal(await mcp.ping(), true);
   const info = await mcp.initialize();
-  assert.equal(info.instructions, "Use the Blender tools.");
+  assert.equal(info.instructions, BUNDLED.instructions);
   assert.equal(info.version, "5.2.2");
   assert.deepEqual((await mcp.listTools()).map((t) => t.name), TOOLS.map((t) => t.name));
   assert.ok(server.seen.every((s) => s.auth === "Bearer s3cret"));
