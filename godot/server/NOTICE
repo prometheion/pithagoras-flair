@@ -1,0 +1,41 @@
+pithagoras-godot container image
+Copyright 2026 The Pithagoras Flair authors
+
+This image is what the Pithagoras Godot extension (pithagoras-godot, https://github.com/thecodacus/pithagoras-flair)
+runs. Its own files are under the Apache License 2.0: /opt/godot-server/server.py, /opt/godot-server/viewer.html and
+the editor plugin /opt/godot-server/addon/godot_mcp_bridge. The plugin is copied into each Godot project the server
+opens, and is Apache-2.0 there too.
+
+The image also contains, unchanged, software made by others, under their own licences. Their licence texts are in
+this folder (/usr/share/doc/pithagoras-godot):
+
+Godot Engine 4.7.2 (the editor and the web and linux export templates)
+  MIT licence: godot-LICENSE.txt. The third-party code Godot contains, and its licences: godot-COPYRIGHT.txt.
+  https://godotengine.org, source at https://github.com/godotengine/godot/tree/4.7.2-stable
+  Not made or endorsed by the Godot Foundation.
+
+Selkies 2.1.0 (the browser stream)
+  Mozilla Public License 2.0: selkies-LICENSE. Its Python source is installed as it is, in /opt/selkies.
+  Source at https://github.com/selkies-project/selkies/tree/2.1.0
+
+pixelflux 2.2.1 (inside Selkies: screen capture and encoding)
+  Mozilla Public License 2.0, with the licences of what it bundles: pixelflux-LICENSES.md. The build Selkies ships
+  bundles libx264 (x264 commit b35605ace3ddf7c1a5d67a2eb553f034aef41d55, core 165) and x265 4.2 (commit
+  e444744c03978c1fb4e037168967020cf2648427), which are under the GNU General Public License, version 2 or later;
+  pixelflux's own notes say that the combined binary is then distributed under the GPL. Each release of this image on
+  GitHub (https://github.com/thecodacus/pithagoras-flair/releases) carries the source of pixelflux 2.2.1 and of those
+  x264 and x265 commits, as pixelflux's pyproject.toml pins them.
+
+VirtualGL 3.1.5 (OpenGL on the GPU for Compatibility-renderer projects)
+  wxWindows Library Licence 3.1 (the GNU Library General Public Licence, version 2 or later, with an exception):
+  virtualgl-LICENSE.txt, and the licence of the FLTK parts it carries: virtualgl-LICENSE-FLTK.txt. Its source tarball
+  is attached to each release of this image too. https://virtualgl.org
+
+Ubuntu 24.04 and the packages installed from its archive (among them Xvfb, Mesa, ffmpeg, xdotool, Python 3)
+  Each under its own licence, in /usr/share/doc/<package>/copyright. Their sources are in Ubuntu's archive
+  (https://archive.ubuntu.com, `apt-get source <package>`); each release of this image lists the packages and
+  their versions (dpkg -l).
+
+The NVIDIA driver is not in the image: the NVIDIA Container Toolkit puts the host's driver into the container when it
+starts. The two loader manifests in /etc/vulkan/icd.d and /usr/share/glvnd/egl_vendor.d are a few lines written when
+the image is built.

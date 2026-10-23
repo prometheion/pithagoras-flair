@@ -1,0 +1,16 @@
+pithagoras-godot
+Copyright 2026 The Pithagoras Flair authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This package is the Godot extension for Pithagoras: its browser half (web/) and its server half (server.js), built
+from godot/src and shared/ in https://github.com/thecodacus/pithagoras-flair. shared/docker-api.ts there is a copy of
+types from Pithagoras (https://github.com/thecodacus/pithagoras, Apache-2.0). web/client.js bundles icons from
+react-icons (https://github.com/react-icons/react-icons, MIT), drawn from Lucide (https://lucide.dev, ISC).
+
+The package contains no Godot. The container image it runs, ghcr.io/thecodacus/pithagoras-godot, is built from
+godot/server in the same repository and redistributes Godot (MIT), Selkies and pixelflux (MPL-2.0, pixelflux bundling
+x264 and x265 under the GPL), VirtualGL (wxWindows Library Licence) and Ubuntu packages, each under its own licence:
+see godot/server/NOTICE in the repository and /usr/share/doc/pithagoras-godot in the image.
+
+Not made or endorsed by the Godot Foundation. "Godot" names what the extension runs.

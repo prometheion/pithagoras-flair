@@ -1,0 +1,37 @@
+# The Godot extension on every pull request that touches it, and on main: built and type-checked, its unit tests, its
+# server's Python compiled, and its portal-tier tests against the Pithagoras its extension API is of
+# (scripts/pithagoras.sh). The image is built and tested by the release (godot-release.yml).
+name: Godot
+
+on:
+  pull_request:
+    paths: ["godot/**", "shared/**", "scripts/**", "package.json", "package-lock.json", ".github/workflows/godot.yml"]
+  push:
+    branches: [main]
+    paths: ["godot/**", "shared/**", "scripts/**", "package.json", "package-lock.json", ".github/workflows/godot.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build and type-check
+        run: npm run build -w godot
+      - name: Unit tests
+        run: npm test -w godot
+      - name: The server's Python compiles
+        run: python3 -m py_compile godot/server/server.py godot/server/client.py
+      - name: Pithagoras, for the portal-tier tests
+        run: ./scripts/pithagoras.sh
+      - name: Portal-tier tests
+        run: npm run test:portal -w godot
+        env:
+          PITHAGORAS_DIR: ${{ github.workspace }}/.pithagoras
