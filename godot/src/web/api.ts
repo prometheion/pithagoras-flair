@@ -56,6 +56,7 @@ export const SAID = [
   msg("That card is not on this host."),
   msg("A container named pithagoras-godot is there that is not this extension's. Rename or remove it first."),
   msg("Choose one of the screen sizes offered."),
+  msg("The card PITHAGORAS_GODOT_GPU names is not on this host."),
 ];
 
 export const api = {

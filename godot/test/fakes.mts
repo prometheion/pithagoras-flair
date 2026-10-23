@@ -31,6 +31,8 @@ export function fakeDocker(options: { owner?: string; network?: string; gpus?: s
     noGpu: options.noGpu,
     available: true,
     pullFails: undefined as string | undefined,
+    /** The network namespace a command run in a container finds it in (`readlink /proc/self/ns/net`). */
+    namespace: "net:[4026532001]",
   };
   const info = (name: string, kept: Kept): ContainerInfo => ({ name, id: kept.id, image: kept.spec.Image, state: kept.running ? "running" : "exited", status: "", owner: kept.owner, labels: (kept.spec.Labels as Record<string, string>) ?? {} });
   const docker: Docker = {
@@ -92,7 +94,11 @@ export function fakeDocker(options: { owner?: string; network?: string; gpus?: s
         };
       },
       update: async () => {},
-      exec: async () => ({ output: "", exitCode: 0, timedOut: false }),
+      async exec(name, cmd) {
+        calls.push(`exec ${name} ${cmd.join(" ")}`);
+        if (!containers.get(name)?.running) throw Object.assign(new Error(`Container ${name} is not running`), { status: 409 });
+        return { output: `${state.namespace}\n`, exitCode: 0, timedOut: false };
+      },
       adopt: async (name) => info(name, containers.get(name)!),
     },
     volumes: {

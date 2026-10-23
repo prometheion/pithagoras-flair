@@ -57,6 +57,7 @@ export const de: Record<string, string> = {
   "A container named pithagoras-godot is there that is not this extension's. Rename or remove it first.":
     "Es gibt einen Container namens pithagoras-godot, der nicht zu dieser Erweiterung gehört. Benenne ihn um oder entferne ihn zuerst.",
   "Choose one of the screen sizes offered.": "Wähle eine der angebotenen Bildschirmgrößen.",
+  "The card PITHAGORAS_GODOT_GPU names is not on this host.": "Die Karte, die PITHAGORAS_GODOT_GPU nennt, gibt es auf diesem Host nicht.",
 
   // The page in Settings.
   Running: "Läuft",

@@ -113,6 +113,8 @@ export function GodotSettings() {
   const there = !["absent", "unavailable", "foreign", "downloading"].includes(state.state);
   const said = (text: string) => t(text);
   const line = editorLine(state);
+  // The host pinned a card Docker does not give: the server half refuses to install, and the page says why first.
+  const pinMissing = !!hardware && hardware.pinned && !hardware.cards.length;
 
   return (
     <div className="space-y-5">
@@ -140,7 +142,7 @@ export function GodotSettings() {
         {line && <p className="mt-2 text-xs text-fg-faint">{line}</p>}
         <div className="mt-3 flex flex-wrap gap-2">
           {state.state === "absent" && (
-            <button type="button" disabled={working} onClick={() => act(api.install)} className={primary}>
+            <button type="button" disabled={working || pinMissing} onClick={() => act(api.install)} className={primary}>
               {working && <LuRefreshCw aria-hidden className="h-3.5 w-3.5 animate-spin" />}
               {t("Install (downloads about 0.6 GB)")}
             </button>
@@ -172,7 +174,8 @@ export function GodotSettings() {
       <ui.Section title={t("GPU")}>
         {hardwareError && <p className="text-xs text-danger">{said(hardwareError)}</p>}
         {!hardware && !hardwareError && <p className="text-xs text-fg-faint">{t("Looking for GPUs…")}</p>}
-        {hardware && !hardware.cards.length && <p className="text-xs text-fg-muted">{t("No NVIDIA GPU found: Godot opens Compatibility projects with software OpenGL and cannot render Forward+ projects.")}</p>}
+        {pinMissing && <p className="text-xs text-danger">{t("The card PITHAGORAS_GODOT_GPU names is not on this host.")}</p>}
+        {hardware && !hardware.cards.length && !hardware.pinned && <p className="text-xs text-fg-muted">{t("No NVIDIA GPU found: Godot opens Compatibility projects with software OpenGL and cannot render Forward+ projects.")}</p>}
         {hardware && hardware.error && !hardware.cards.length && <p className="mt-1 font-mono text-[11px] text-fg-faint">{hardware.error}</p>}
         {hardware && hardware.cards.length > 0 && (
           <div className="space-y-1.5" role="radiogroup" aria-label={t("GPU")}>

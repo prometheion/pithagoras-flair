@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readlinkSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ServerPortal } from "@pithagoras/extension-api/server";
 import type { ContainerSpec, Docker } from "./docker-api";
@@ -24,6 +25,14 @@ import type { Store } from "./store";
  * image after an update, another card) or whose network is not the portal's loopback as it is now (the portal's own
  * container was made again) is stale. A running one is made again at once, the volume kept; a stopped one at its next
  * Start. That is Voice's rule, with a hash for Voice's recipe label.
+ *
+ * A portal container that restarts keeps its id, so its network as Docker names it (`container:<id>`) is the same,
+ * but it comes back in a network namespace of its own: the server's container, which joined the old one as it
+ * started, is left alone in it, running and never reached. So while a running container does not answer, the look
+ * every 30 seconds asks it which namespace it is in (`readlink /proc/self/ns/net` in it, the portal's own
+ * /proc/self/ns/net beside it: the kernel numbers each namespace once, whichever process looks). One in another
+ * namespace than the portal's is stopped and started, which joins the portal's as it is now: the same container,
+ * its volume and its spec kept. Voice and Understory compare the name alone.
  */
 
 /** The names a service goes by, each one the portal's environment can change: see `namesFrom`. */
@@ -136,12 +145,15 @@ export interface ServiceOptions {
   spec: (plan: Plan) => ContainerSpec;
   /** Runs the GPU probe; the tests give their own. */
   probe?: (docker: Docker, name: string, pinned?: string) => Promise<Probed>;
+  /** The portal's own network namespace, as /proc/self/ns/net names it (`net:[4026532123]`); the tests give their own. */
+  namespace?: () => string;
 }
 
 export function service(options: ServiceOptions) {
   const { portal, app, names, store, relay, mcp } = options;
   const docker = options.docker;
   const runProbe = options.probe ?? probe;
+  const namespace = options.namespace ?? (() => readlinkSync("/proc/self/ns/net"));
   let pending = false;
   let downloading = false;
   let progress = "";
@@ -185,13 +197,14 @@ export function service(options: ServiceOptions) {
    * The card the server is to be on: the one the host's owner pinned (the probe asked for it alone); else the one chosen
    * on the page, if it is there; else the one the container holds now, so that the most free memory, which the server's
    * own use changes, does not move it; else the card with the most free memory. Without a probe in this run of the half,
-   * the container keeps its card unless another was chosen.
+   * the container keeps its card unless another was chosen. A pinned card the probe did not find leaves a container
+   * on the card it holds (a new one is refused: `install`), and with no pin and no card found, it has none.
    */
   function wantedCard(detail: Inspected | undefined): { uuid: string } | undefined {
     const chosen = names.gpu ? "" : (store.setting("gpu") ?? "");
     const held = heldCard(detail);
     if (!probed) return chosen ? { uuid: chosen } : held ? { uuid: held } : undefined;
-    if (!probed.cards.length) return undefined;
+    if (!probed.cards.length) return names.gpu && held ? { uuid: held } : undefined;
     if (names.gpu) return { uuid: probed.cards[0].uuid };
     const card = probed.cards.find((c) => c.uuid === chosen) ?? probed.cards.find((c) => c.uuid === held) ?? mostFree(probed.cards);
     return card && { uuid: card.uuid };
@@ -262,6 +275,15 @@ export function service(options: ServiceOptions) {
   // --- what the person asks for ---
 
   /**
+   * A card the host's owner pinned (`PITHAGORAS_<APP>_GPU`) that the probe did not find: Docker would not give a
+   * container that card (no card by that UUID or index, or no NVIDIA runtime), so none is made with it, and none is
+   * made without it either, as the owner asked for that card.
+   */
+  function refuseMissingPin(found: Probed): void {
+    if (names.gpu && !found.cards.length) throw new Error(`The card PITHAGORAS_${app.toUpperCase()}_GPU names is not on this host.`);
+  }
+
+  /**
    * Installs the server, or starts it: the GPU probed (once in each run of the half, and again as the page opens),
    * the image downloaded where it is not there yet, the volume made, and the container made where there is none or
    * it is stale, then started. In the background: the page follows it in `status`. A failure is `error` there.
@@ -271,12 +293,13 @@ export function service(options: ServiceOptions) {
     const d = docker();
     if (!(await d.available())) throw new Error("Docker does not answer.");
     if ((await own()) === "foreign") throw new Error(`A container named ${names.container} is there that is not this extension's. Rename or remove it first.`);
+    if (probed) refuseMissingPin(probed);
     pending = true;
     error = "";
     progress = "";
     void (async () => {
       try {
-        if (!probed) await detect();
+        refuseMissingPin(probed ?? (await detect()));
         downloading = true;
         await d.images.ensure(names.image, (state) => {
           if (state.active && state.line !== "starting") progress = state.line;
@@ -335,13 +358,43 @@ export function service(options: ServiceOptions) {
   }
 
   /**
+   * Whether the running container is in another network namespace than the portal's: left in the one the portal's
+   * container had before it restarted. Asked in the container, as its own user; one that cannot say is taken to be
+   * where it should be.
+   */
+  async function stranded(): Promise<boolean> {
+    const ours = namespace();
+    const theirs = await docker().containers.exec(names.container, ["readlink", "/proc/self/ns/net"], { timeoutMs: 10_000 });
+    return theirs.exitCode === 0 && theirs.output.trim() !== ours;
+  }
+
+  /** Stops the container and starts it again, which puts it in the portal's network namespace as it is now. */
+  async function rejoin(): Promise<void> {
+    pending = true;
+    error = "";
+    try {
+      portal.log(`${app}'s container is in the network namespace the portal had before its container restarted: starting it again in the one it has now`);
+      const d = docker();
+      await d.containers.stop(names.container);
+      await d.containers.start(names.container);
+      void whenAnswering().catch((e) => portal.log(`could not read ${app}'s tools: ${(e as Error).message}`));
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      pending = false;
+    }
+  }
+
+  /**
    * The look every 30 seconds, and once as the half starts: a running container that is stale is made again (in
-   * `status`), and while the server answers, its tools are asked for again, which reloads the open chats only where
-   * they changed. A container somebody stopped is never started here.
+   * `status`), one left in an old network namespace of the portal's is started again in its new one, and while the
+   * server answers, its tools are asked for again, which reloads the open chats only where they changed. A container
+   * somebody stopped is never started here.
    */
   async function maintain(): Promise<void> {
     const now = await status();
     if (now.state === "running") await relay.refresh();
+    else if (now.state === "starting" && !now.busy && (await stranded())) await rejoin();
   }
 
   /** The cards as the probe finds them now, and which the server is, or would be, on. */

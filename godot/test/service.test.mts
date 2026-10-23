@@ -21,7 +21,8 @@ import { fakeDocker, fakeMcp, fakePortal } from "./fakes.mts";
 const CARD0 = { index: 0, uuid: "GPU-aaaa0000", name: "NVIDIA GeForce RTX 3060", usedMiB: 11000, totalMiB: 12288 };
 const CARD1 = { index: 1, uuid: "GPU-bbbb1111", name: "NVIDIA GeForce RTX 3060", usedMiB: 158, totalMiB: 12288 };
 
-async function setup(options: { names?: Partial<Names>; probed?: Probed } = {}) {
+/** `probed`: what the probe finds, or "real" for shared/gpu.ts's own probe against the fake Docker. */
+async function setup(options: { names?: Partial<Names>; probed?: Probed | "real" } = {}) {
   const fake = fakePortal();
   const store = openStore(fake.dataDir);
   const server = await fakeMcp(() => store.token());
@@ -39,7 +40,8 @@ async function setup(options: { names?: Partial<Names>; probed?: Probed } = {}) 
     relay: tools,
     mcp,
     spec: (plan) => godotSpec(plan, { port: names.port, volume: names.volume, image: names.image, display: displayOf(store.setting("display")) }),
-    probe: async () => options.probed ?? { cards: [CARD0, CARD1], optix: "toolkit", error: "" },
+    ...(options.probed === "real" ? {} : { probe: async () => (options.probed as Probed | undefined) ?? { cards: [CARD0, CARD1], optix: "toolkit", error: "" } }),
+    namespace: () => "net:[4026532001]",
   });
   return { fake, store, server, d, names, svc };
 }
@@ -104,6 +106,24 @@ test("a container on the portal's old network is made again on the new one, thou
   assert.equal(kept(d).running, true);
 });
 
+test("after the portal's container restarts under the same id, a server left in its old network namespace is started again in the new one", async () => {
+  const { d, svc, server } = await setup();
+  await svc.install();
+  await settled(svc);
+  const made = kept(d).id;
+  // Nothing answers the half: the portal is in a new namespace, the server in the old one.
+  await server.close();
+  await svc.maintain();
+  assert.ok(d.calls.includes("exec pithagoras-godot readlink /proc/self/ns/net"));
+  assert.ok(!d.calls.includes("stop pithagoras-godot"), "in the portal's namespace: only not answering yet, and left alone");
+  d.state.namespace = "net:[4026531840]";
+  await svc.maintain();
+  await settled(svc);
+  assert.deepEqual(d.calls.slice(-2), ["stop pithagoras-godot", "start pithagoras-godot"]);
+  assert.equal(kept(d).id, made, "the same container, its volume and its spec kept");
+  assert.equal(kept(d).running, true);
+});
+
 test("a server that exited, or that Docker is starting again, has failed; one not answering yet is starting", async () => {
   const { d, svc, server } = await setup();
   await svc.install();
@@ -164,6 +184,24 @@ test("with no GPU for Docker to give, the container is made without one; without
   d.state.available = false;
   assert.equal((await svc.status()).state, "unavailable");
   await assert.rejects(svc.install(), /Docker does not answer/);
+});
+
+test("a card the host pins that Docker cannot give is said as that, and nothing is made with it or without it", async () => {
+  const { d, svc } = await setup({ names: { gpu: "7" }, probed: "real" });
+  d.state.noGpu = "OCI runtime create failed: error running prestart hook #0: nvidia-container-cli: device error: 7: unknown device: unknown";
+  // Install before the page has looked: the probe runs first, and the install is refused in the background.
+  await svc.install();
+  const now = await settled(svc);
+  assert.equal(now.state, "absent");
+  assert.equal(now.error, "The card PITHAGORAS_GODOT_GPU names is not on this host.");
+  // The page's look: the cards, none, with Docker's words; then Install is refused at once.
+  const hardware = await svc.hardware();
+  assert.deepEqual([hardware.cards, hardware.pinned], [[], true]);
+  assert.match(hardware.error, /unknown device/);
+  await assert.rejects(svc.install(), /^Error: The card PITHAGORAS_GODOT_GPU names is not on this host\.$/);
+  assert.ok(!d.containers.has("pithagoras-godot"));
+  assert.ok(!d.calls.includes("pull ghcr.io/thecodacus/pithagoras-godot:0.1.0"), "not even the image is downloaded");
+  assert.ok(!d.containers.has("pithagoras-godot-probe"), "the probe is removed");
 });
 
 test("a download that fails is said, and nothing is made", async () => {
