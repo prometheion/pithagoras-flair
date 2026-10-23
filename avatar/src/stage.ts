@@ -1,6 +1,6 @@
-import { AmbientLight, DirectionalLight, Object3D, PerspectiveCamera, Scene, TextureLoader, Timer, Vector3, WebGLRenderer } from "three";
+import { AmbientLight, DirectionalLight, PerspectiveCamera, Scene, TextureLoader, Timer, Vector3, WebGLRenderer } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
+import { VRMLoaderPlugin, VRMUtils, type VRM, type VRMLookAtBoneApplier, type VRMLookAtExpressionApplier } from "@pixiv/three-vrm";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
 import type { Model } from "./model";
 import { createMotion, damp, type Bone, type Pose } from "./motion";
@@ -32,17 +32,37 @@ const bust = (head: number): Framing => ({ y: head - 0.05, z: 1.6 * OVERSCAN, at
 const face = (head: number): Framing => ({ y: head + 0.02, z: 0.75, at: head + 0.02 });
 
 /** The lights, as the model is drawn in both: one from above in front, and a little all round. */
-function lit(): { scene: Scene; camera: PerspectiveCamera; gaze: Object3D } {
+function lit(): { scene: Scene; camera: PerspectiveCamera } {
   const scene = new Scene();
   const sun = new DirectionalLight(0xffffff, Math.PI);
   sun.position.set(0.5, 1.5, 2);
   scene.add(sun, new AmbientLight(0xffffff, 0.4));
   const camera = new PerspectiveCamera(22, 1, 0.1, 20);
-  // What the eyes look at, at the camera: moved from there a little as eyes do, and away while thinking.
-  const gaze = new Object3D();
-  camera.add(gaze);
   scene.add(camera);
-  return { scene, camera, gaze };
+  return { scene, camera };
+}
+
+const at = new Vector3();
+
+/**
+ * Where the eyes look, set before `vrm.update`: at the camera, and from there `gaze` to the viewer's right and up, as
+ * a share of how far the model's eyes turn (motion.ts). three-vrm turns the angle to what the eyes look at into the
+ * eyes' own angle by the model's range maps, which commonly give the eyes' furthest (10° of an eye bone, or a look
+ * expression at its full) only for a target a quarter turn (90°) aside: a point a little away from the camera would
+ * not move the eyes visibly. So the angle to the camera is added to in the maps' own terms, the share of their
+ * `inputMaxValue`, and each model's eyes go as far as its own maps take them. The head is where it was last drawn,
+ * a frame ago.
+ *
+ * Its applier is one of the two kinds three-vrm's loader makes, a bone one or an expression one, which both have the maps.
+ */
+export function aim(vrm: VRM, camera: PerspectiveCamera, [right, up]: [number, number]) {
+  const eyes = vrm.lookAt;
+  if (!eyes) return;
+  eyes.lookAt(camera.getWorldPosition(at));
+  const maps = eyes.applier as VRMLookAtBoneApplier | VRMLookAtExpressionApplier;
+  // Positive yaw is to the model's left, the viewer's right; negative pitch is up.
+  eyes.yaw += right * maps.rangeMapHorizontalOuter.inputMaxValue;
+  eyes.pitch -= up * (up > 0 ? maps.rangeMapVerticalUp : maps.rangeMapVerticalDown).inputMaxValue;
 }
 
 /**
@@ -125,7 +145,7 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
   const canvas = renderer.domElement;
   const gl = renderer.getContext();
   host.appendChild(canvas);
-  const { scene, camera, gaze } = lit();
+  const { scene, camera } = lit();
   const motion = createMotion();
   const timer = new Timer();
   // A page in the background piles up no time to catch up on.
@@ -169,8 +189,7 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
     if (gap > 500) vrm.springBoneManager?.reset();
     const moved = motion.step({ mode: mode(), output: levels.current.output, dt, reduced });
     pose(vrm, moved);
-    gaze.position.set(moved.gaze[0], moved.gaze[1], 0);
-    gaze.updateMatrixWorld();
+    aim(vrm, camera, moved.gaze);
     vrm.update(dt);
     renderer.render(scene, camera);
     // The first frame, and the first once a lost context is given back: three.js draws nothing while it is lost.
@@ -197,7 +216,6 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
       const loaded = await loadModel(model, loading.signal);
       if (loading.signal.aborted) return VRMUtils.deepDispose(loaded.scene);
       head = rest(loaded);
-      if (loaded.lookAt) loaded.lookAt.target = gaze;
       scene.add(loaded.scene);
       vrm = loaded;
       look(camera, bust(head));
@@ -238,12 +256,12 @@ export async function makePortrait(model: Model): Promise<Blob> {
   renderer.setSize(256, 256, false);
   let vrm: VRM | undefined;
   try {
-    const { scene, camera, gaze } = lit();
+    const { scene, camera } = lit();
     vrm = await loadModel(model, new AbortController().signal);
     const head = rest(vrm);
     look(camera, face(head));
-    if (vrm.lookAt) vrm.lookAt.target = gaze;
     scene.add(vrm.scene);
+    aim(vrm, camera, [0, 0]);
     vrm.update(0);
     renderer.render(scene, camera);
     return await new Promise<Blob>((resolve, reject) => canvas.toBlob((png) => (png ? resolve(png) : reject(new Error("The portrait could not be made"))), "image/png"));

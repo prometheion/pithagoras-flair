@@ -27,7 +27,10 @@ export interface Pose {
   /** The VRM expressions it sets, 0 to 1: the mouth open (`aa`) and rounded (`oh`), and the eyes shut (`blink`). */
   expressions: { aa: number; oh: number; blink: number };
   bones: Record<Bone, [number, number, number]>;
-  /** Where the eyes look, from the camera, in metres to the right and up. */
+  /**
+   * Where the eyes look, from the camera: to the viewer's right and up, each as a share of how far the model's eyes
+   * turn that way (1 is their furthest; the stage turns it into the model's own angles).
+   */
   gaze: [number, number];
 }
 
@@ -56,7 +59,8 @@ export function createMotion(random: () => number = Math.random) {
   let nextBlink = 2 + 4 * random();
   let blinkAt = -Infinity;
   let second = Infinity;
-  // The eyes move to a new point near the camera every 0.8 to 2.5 seconds, as eyes make small jumps.
+  // The eyes move to a new point near the camera every 0.8 to 2.5 seconds, as eyes make small jumps: up to a fifth of
+  // their way out.
   let nextSaccade = 0.8 + 1.7 * random();
   let saccade: [number, number] = [0, 0];
 
@@ -75,7 +79,7 @@ export function createMotion(random: () => number = Math.random) {
       }
       if (t >= nextSaccade) {
         const angle = 2 * Math.PI * random();
-        const r = 0.02 * Math.sqrt(random());
+        const r = 0.2 * Math.sqrt(random());
         saccade = [r * Math.cos(angle), r * Math.sin(angle)];
         nextSaccade += 0.8 + 1.7 * random();
       }
@@ -118,7 +122,7 @@ export function createMotion(random: () => number = Math.random) {
           leftLowerArm: [0, 0, -0.15],
           rightLowerArm: [0, 0, 0.15],
         },
-        gaze: [look[0] + 0.35 * pose, look[1] + 0.3 * pose],
+        gaze: [look[0] + 0.7 * pose, look[1] + 0.5 * pose],
       };
     },
   };

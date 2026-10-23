@@ -1,6 +1,6 @@
 /**
  * Two VRM models made in code, so the tests need no model file in the repository: the 15 bones three-vrm needs plus
- * chest and neck, one triangle in front of the head with a morph target that the mouth (`aa`) and the blink are bound
+ * chest, neck and the eyes, one triangle in front of the head with a morph target that the mouth (`aa`) and the blink are bound
  * to, a meta with a licence, and the eyes looking by their bones. `tinyVrm1` is VRM 1.0 (`VRMC_vrm`), `tinyVrm0` the
  * same as VRM 0.x (`VRM`). Each takes a change to its glTF JSON, for a test of a damaged copy.
  */
@@ -10,6 +10,7 @@ type Json = Record<string, any>;
 /** Each bone: its name, where it is from its parent, and its parent. */
 const BONES: [string, [number, number, number], string | null][] = [
   ["hips", [0, 0.9, 0], null], ["spine", [0, 0.1, 0], "hips"], ["chest", [0, 0.15, 0], "spine"], ["neck", [0, 0.2, 0], "chest"], ["head", [0, 0.1, 0], "neck"],
+  ["leftEye", [0.03, 0.06, 0.05], "head"], ["rightEye", [-0.03, 0.06, 0.05], "head"],
   ["leftUpperArm", [0.15, 0.15, 0], "chest"], ["leftLowerArm", [0.25, 0, 0], "leftUpperArm"], ["leftHand", [0.25, 0, 0], "leftLowerArm"],
   ["rightUpperArm", [-0.15, 0.15, 0], "chest"], ["rightLowerArm", [-0.25, 0, 0], "rightUpperArm"], ["rightHand", [-0.25, 0, 0], "rightLowerArm"],
   ["leftUpperLeg", [0.08, -0.05, 0], "hips"], ["leftLowerLeg", [0, -0.4, 0], "leftUpperLeg"], ["leftFoot", [0, -0.4, 0], "leftLowerLeg"],

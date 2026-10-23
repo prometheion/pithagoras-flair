@@ -73,7 +73,7 @@ test("the thinking pose starts after 0.6 s of thinking, with a blink, and leaves
   const posed = later.at(-1)!.pose;
   // At half its angles: reduced motion.
   assert.ok(posed.bones.head[1] > 0.045 && posed.bones.head[1] < 0.06, `turned ${posed.bones.head[1]}`);
-  assert.ok(posed.gaze[0] > 0.13 && posed.gaze[1] > 0.11, `looking aside and up ${posed.gaze}`);
+  assert.ok(posed.gaze[0] > 0.3 && posed.gaze[1] > 0.2, `looking aside and up, a third and a quarter of the eyes' way ${posed.gaze}`);
   const after = run(motion, 0.1, { mode: "output", reduced: true });
   assert.ok(after.at(-1)!.pose.bones.head[1] < posed.bones.head[1], "leaving");
   // A short thinking, the gap between two phrases, does not move the head.
