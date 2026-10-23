@@ -1,4 +1,4 @@
-import { AmbientLight, DirectionalLight, Object3D, PerspectiveCamera, Scene, Timer, Vector3, WebGLRenderer } from "three";
+import { AmbientLight, DirectionalLight, Object3D, PerspectiveCamera, Scene, TextureLoader, Timer, Vector3, WebGLRenderer } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
@@ -48,11 +48,20 @@ function lit(): { scene: Scene; camera: PerspectiveCamera; gaze: Object3D } {
 /**
  * A model's file, fetched and read, ready to be posed: three-vrm's clean-ups for drawing, a VRM 0.x model turned to
  * face the camera as a VRM 1.0 one does, and nothing culled, since a bone moves a mesh out of the box it was measured in.
+ *
+ * Its pictures are read through an `<img>` (TextureLoader), as GLTFLoader itself reads them on Safari before 17. Its
+ * own way elsewhere, ImageBitmapLoader, fetch()es each picture of the file from a blob: address, which the portal's
+ * Content-Security-Policy does not allow (its connect-src has no blob:, its img-src has): the model would be drawn
+ * without them, white.
  */
 async function loadModel(model: Model, signal: AbortSignal): Promise<VRM> {
   const answer = await fetch(portal.api.url(`/models/${model.id}/file`), { signal });
   if (!answer.ok) throw new Error(`The model's file could not be fetched (HTTP ${answer.status})`);
   const loader = new GLTFLoader();
+  loader.register((parser) => {
+    parser.textureLoader = new TextureLoader(parser.options.manager);
+    return { name: "flair_texture_loader" };
+  });
   loader.register((parser) => new VRMLoaderPlugin(parser));
   const gltf = await loader.parseAsync(await answer.arrayBuffer(), "");
   const vrm = gltf.userData.vrm as VRM | undefined;

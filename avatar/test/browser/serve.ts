@@ -9,7 +9,8 @@ import { stubPortal } from "../stub-portal.ts";
 
 /**
  * What the browser tests are served from (playwright.config.mjs starts it): the test page (harness.html, with
- * harness.tsx built beside it with the React the portal has), the extension's browser half as it is built (web/), and
+ * harness.tsx built beside it with the React the portal has), under the portal's own Content-Security-Policy, the
+ * extension's browser half as it is built (web/), and
  * its server half's routes on a stand-in for the portal, with a data folder of its own that `POST /reset` empties.
  */
 const HERE = import.meta.dirname;
@@ -37,8 +38,21 @@ const reset = () => {
 };
 reset();
 
+/**
+ * The Content-Security-Policy the portal serves its pages with (`portalSecurityHeaders` in Pithagoras'
+ * core/server/src/http-security.ts), word for word: the extension draws under it there, so it does here.
+ */
+const PORTAL_CSP = [
+  "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:",
+  "font-src 'self' data:", "media-src 'self' blob: data:",
+  "connect-src 'self' https: http: ws: wss:", "worker-src 'self' blob:",
+  "frame-src 'self' https: http:", "object-src 'none'", "base-uri 'self'",
+  "frame-ancestors 'self'", "form-action 'self'",
+].join("; ");
+
 const app = express()
-  .get("/", (_req, res) => res.sendFile(path.join(HERE, "harness.html")))
+  .get("/", (_req, res) => res.set("Content-Security-Policy", PORTAL_CSP).sendFile(path.join(HERE, "harness.html")))
   .use("/.build", express.static(path.join(HERE, ".build")))
   .use("/web", express.static(path.join(PACKAGE, "web")))
   .post("/reset", (_req, res) => {

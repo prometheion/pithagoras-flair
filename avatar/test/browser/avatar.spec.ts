@@ -85,6 +85,31 @@ const frames = async (page: Page, n: number) => {
   return seen;
 };
 const median = (list: number[]) => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)];
+/** How much of what the model covers in the frame is coloured (its channels more than 40 apart), not white or grey. */
+const coloured = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<number>((resolve) =>
+        requestAnimationFrame(() => {
+          const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar canvas")!;
+          const copy = document.createElement("canvas");
+          copy.width = gl.width;
+          copy.height = gl.height;
+          const ctx = copy.getContext("2d")!;
+          ctx.drawImage(gl, 0, 0);
+          const pixels = ctx.getImageData(0, 0, copy.width, copy.height).data;
+          let covered = 0;
+          let colour = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i + 3] < 250) continue;
+            covered++;
+            const [r, g, b] = [pixels[i], pixels[i + 1], pixels[i + 2]];
+            if (Math.max(r, g, b) - Math.min(r, g, b) > 40) colour++;
+          }
+          resolve(colour / covered);
+        }),
+      ),
+  );
 
 test("each model is offered as an avatar of its own, by its name, and taken out when it is gone", async ({ page, request }) => {
   const [one, zero] = await open(page, request, [tinyVrm1(), tinyVrm0()]);
@@ -279,6 +304,19 @@ test.describe("with real models", () => {
     expect(after.createTexture - own.createTexture).toBeGreaterThan(20);
     expect(after.createTexture - own.createTexture - (after.deleteTexture - own.deleteTexture)).toBeLessThanOrEqual(kept);
     expect(warnings.filter((w) => /VRM/.test(w))).toEqual([]);
+  });
+
+  test("pixiv's sample model is drawn with its textures under the portal's Content-Security-Policy", async ({ page, request }) => {
+    const file = sample("twist");
+    test.skip(!file, "the sample model could not be fetched");
+    const refused: string[] = [];
+    page.on("console", (m) => /Content Security Policy|Couldn't load texture/.test(m.text()) && refused.push(m.text()));
+    const [model] = await open(page, request, [readFileSync(file!)]);
+    await mount(page, { entry: model.id });
+    await drawn(page);
+    // Its hair, eyes and skin. Drawn without its textures, it is white and grey: a fifth of a percent of it coloured.
+    expect(await coloured(page)).toBeGreaterThan(0.1);
+    expect(refused).toEqual([]);
   });
 
   test("Seed-san, whose eyes look by expressions, is drawn", async ({ page, request }) => {
