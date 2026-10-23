@@ -89,6 +89,10 @@ test("a file that is not a model this extension can draw is refused with a code 
     [tinyVrm1((json) => (json.extensionsUsed = [])), "not-vrm"],
     [tinyVrm1((json) => delete json.extensions.VRMC_vrm.humanoid.humanBones.leftFoot), "missing-bone", "leftFoot"],
     [tinyVrm1((json) => (json.extensionsRequired = ["KHR_draco_mesh_compression"])), "compressed", "KHR_draco_mesh_compression"],
+    [tinyVrm1((json) => json.buffers.push({ uri: "https://tracker.example.invalid/body.bin", byteLength: 36 })), "external"],
+    [tinyVrm1((json) => json.buffers.push({ uri: "body.bin", byteLength: 36 })), "external"],
+    [tinyVrm1((json) => (json.images = [{ uri: "https://tracker.example.invalid/beacon.png?who=me" }])), "external"],
+    [tinyVrm1((json) => (json.images = [{ uri: "skin.png" }])), "external"],
   ];
   for (const [bytes, code, detail] of cases) {
     const answer = await upload(bytes);

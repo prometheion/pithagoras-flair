@@ -9,7 +9,7 @@ import type { ModelSpec, Vrm0Licence, Vrm1Licence } from "./model";
 /** Why a file is refused: `code` is what the page says it in its own words by, `detail` what it names. */
 export class Refused extends Error {
   constructor(
-    readonly code: "not-glb" | "not-vrm" | "missing-bone" | "compressed",
+    readonly code: "not-glb" | "not-vrm" | "missing-bone" | "compressed" | "external",
     message: string,
     readonly detail?: string,
   ) {
@@ -43,7 +43,10 @@ const listed = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
  * version it is made in, the name it gives itself and what it says of its licence. Throws a `Refused`, checked in
  * this order: a GLB of glTF 2 whose header says its length (`not-glb`), with a JSON chunk first that lies inside it
  * and parses (`not-glb`), that is a VRM 1.0 or 0.x model (`not-vrm`) with every bone three-vrm needs
- * (`missing-bone`), and needs none of the compressions it cannot read (`compressed`).
+ * (`missing-bone`), needs none of the compressions it cannot read (`compressed`), and takes nothing from outside its
+ * file (`external`): no buffer or picture with an address (`uri`) of its own. A GLB's own binary chunk has none, and
+ * VRM exporters put everything in it. Every browser that drew one with an address would fetch it: an outside host
+ * would be told who looks at the model and when, and an address of the portal's own would be fetched with its login.
  */
 export function checkVrm(read: (position: number, length: number) => Uint8Array, size: number): ModelSpec & { name?: string } {
   if (size < 20) throw new Refused("not-glb", "The file is too short to be a GLB");
@@ -78,6 +81,9 @@ export function checkVrm(read: (position: number, length: number) => Uint8Array,
   const required = listed(json.extensionsRequired);
   const compressed = COMPRESSIONS.find((name) => required.includes(name));
   if (compressed) throw new Refused("compressed", `The model is compressed in a way this extension cannot read (${compressed})`, compressed);
+  if ([...listed(json.buffers), ...listed(json.images)].some((part) => isObject(part) && "uri" in part)) {
+    throw new Refused("external", "The model loads parts of itself from outside its file");
+  }
 
   if (isObject(bones1)) {
     const meta = isObject(vrm1!.meta) ? vrm1!.meta : {};

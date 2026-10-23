@@ -57,6 +57,8 @@ test("a file that is not a VRM model is refused in the page's words", async ({ p
   await expect(page.getByRole("alert")).toHaveText("This is not a VRM file.");
   await add(page, Buffer.from(tinyVrm1((json) => delete json.extensions.VRMC_vrm.humanoid.humanBones.head)));
   await expect(page.getByRole("alert")).toHaveText("The model has no head bone, which an avatar needs.");
+  await add(page, Buffer.from(tinyVrm1((json) => (json.images = [{ uri: "https://tracker.example.invalid/beacon.png" }]))));
+  await expect(page.getByRole("alert")).toHaveText("The model loads parts of itself from outside its file, which this extension does not allow.");
   await expect(page.getByTestId("empty")).toBeVisible();
 });
 

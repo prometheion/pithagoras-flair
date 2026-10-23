@@ -28,6 +28,7 @@ function refusal(e: unknown): string {
   if (code === "too-large") return t("The model is larger than 64 MB.");
   if (code === "missing-bone") return t("The model has no {bone} bone, which an avatar needs.", { bone: String(detail) });
   if (code === "compressed") return t("The model is compressed in a way this extension cannot read ({name}).", { name: String(detail) });
+  if (code === "external") return t("The model loads parts of itself from outside its file, which this extension does not allow.");
   if (code === "bad-name") return t("The name must be 1 to 80 characters.");
   return (e as Error).message;
 }

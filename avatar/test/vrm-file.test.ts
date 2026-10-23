@@ -88,6 +88,24 @@ test("a model that needs a compression the loader cannot read is compressed, nam
   assert.equal(check(tinyVrm1((json) => json.extensionsUsed.push("EXT_meshopt_compression"))).spec, "1.0");
 });
 
+test("a model that loads a buffer or a picture from an address of its own, outside or beside the portal, is external", () => {
+  const beacon = "https://tracker.example.invalid/beacon.png?who=me";
+  const cases: [string, (json: Record<string, any>) => void][] = [
+    ["a buffer outside", (json) => json.buffers.push({ uri: "https://tracker.example.invalid/body.bin", byteLength: 36 })],
+    ["a buffer beside the portal", (json) => json.buffers.push({ uri: "body.bin", byteLength: 36 })],
+    ["the GLB's own buffer given an address", (json) => (json.buffers[0].uri = "https://tracker.example.invalid/body.bin")],
+    ["a picture outside", (json) => (json.images = [{ uri: beacon }])],
+    ["a picture beside the portal", (json) => (json.images = [{ uri: "../../../api/sessions" }])],
+    ["a picture in the address itself", (json) => (json.images = [{ uri: "data:image/png;base64,iVBORw0KGgo=" }])],
+  ];
+  for (const [what, change] of cases) {
+    assert.deepEqual(refused(tinyVrm1(change)), ["external", undefined], what);
+    assert.deepEqual(refused(tinyVrm0(change)), ["external", undefined], `${what}, VRM 0.x`);
+  }
+  // A picture in the file's own binary chunk, as exporters put them.
+  assert.equal(check(tinyVrm1((json) => (json.images = [{ bufferView: 0, mimeType: "image/png" }]))).spec, "1.0");
+});
+
 test("only the licence fields and values the VRM specifications give are kept, and links only to http and https", () => {
   const odd = check(
     tinyVrm1((json) => {

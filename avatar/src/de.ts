@@ -39,6 +39,8 @@ export const de: Record<string, string> = {
   "The model has no {bone} bone, which an avatar needs.": "Dem Modell fehlt der Knochen {bone}, den ein Avatar braucht.",
   "The model is compressed in a way this extension cannot read ({name}).": "Das Modell ist auf eine Art komprimiert, die diese Erweiterung nicht lesen kann ({name}).",
   "The model is larger than 64 MB.": "Das Modell ist größer als 64 MB.",
+  "The model loads parts of itself from outside its file, which this extension does not allow.":
+    "Das Modell lädt Teile von sich von außerhalb seiner Datei, was diese Erweiterung nicht erlaubt.",
   "The name must be 1 to 80 characters.": "Der Name muss 1 bis 80 Zeichen lang sein.",
   "Thinking": "Denkt nach",
   "This is not a VRM file.": "Das ist keine VRM-Datei.",

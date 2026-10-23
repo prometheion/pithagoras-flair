@@ -40,7 +40,7 @@ In the middle of the stage it is drawn from the chest up, faded out towards the 
 
 ## Models
 
-VRM 1.0 and VRM 0.x models are taken, up to 64 MB. A model is refused when it is not a VRM file, lacks one of the 15 bones every VRM avatar has (hips, spine, head, both upper and lower legs, feet, upper and lower arms and hands), or is compressed with Draco, Basis or meshopt, which this extension cannot read. The models are kept in the extension's own folder in the portal's data folder, which the agents cannot reach, named by their content: the same file uploaded twice is one model.
+VRM 1.0 and VRM 0.x models are taken, up to 64 MB. A model is refused when it is not a VRM file, lacks one of the 15 bones every VRM avatar has (hips, spine, head, both upper and lower legs, feet, upper and lower arms and hands), is compressed with Draco, Basis or meshopt, which this extension cannot read, or loads a part of itself (a buffer or a picture) from an address outside its file: every browser that drew it would fetch that address, and tell whoever is there when the model is looked at. VRM exporters put everything in the file. The models are kept in the extension's own folder in the portal's data folder, which the agents cannot reach, named by their content: the same file uploaded twice is one model.
 
 [VRoid Studio](https://vroid.com/en/studio) makes VRM models, and [VRoid Hub](https://hub.vroid.com) has many to download, each under the terms its author set. For a phone, prefer a model whose textures are 2048 pixels or smaller: large textures can run a phone's graphics memory out.
 
