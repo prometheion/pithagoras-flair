@@ -9,7 +9,7 @@ import type { AvatarMode, AvatarProps, Portal } from "@pithagoras/extension-api"
  * for the rest of the portal that keeps what the extension registers, and the extension's built browser half
  * (web/client.js) loaded into it. Its server half answers under /api/x/%40pithagoras/flair-avatar (serve.ts).
  *
- * A test mounts an entry's component in a box as voice mode draws its avatar, with the orb a stand-in
+ * A test mounts an entry's component in a box as voice mode draws its avatar, with the orb a stand-in canvas
  * (`data-testid="orb"`), the made-up voice of the portal's Avatar dialog, and an error boundary and a Suspense of its
  * own as the portal's; or the extension's page in Settings. `?lang=de` is the page in German.
  */
@@ -109,8 +109,29 @@ const portal = {
   format: { number: (n: number, options?: Intl.NumberFormatOptions) => n.toLocaleString(lang, options) },
 } as unknown as Portal;
 
-/** The portal's orb, as a stand-in: what the avatar draws while it has nothing of its own. */
-const Orb = () => <div data-testid="orb" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "radial-gradient(#82bcff, transparent 70%)" }} />;
+/**
+ * The portal's orb, as a stand-in: what the avatar draws while it has nothing of its own. A canvas of the orb's class
+ * in the orb's overscanned square, as the portal's own is (VoiceOrb.tsx and stage.css), so what the extension's rules
+ * do to a canvas they meet is seen here too.
+ */
+const Orb = () => (
+  <canvas
+    data-testid="orb"
+    className="voice-orb"
+    width={64}
+    height={64}
+    style={{ position: "absolute", left: "-21.428571%", top: "-21.428571%", width: "142.857143%", aspectRatio: "1", maxWidth: "none" }}
+    ref={(canvas) => {
+      const ctx = canvas?.getContext("2d");
+      if (!ctx) return;
+      const glow = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      glow.addColorStop(0, "#82bcff");
+      glow.addColorStop(0.7, "transparent");
+      ctx.fillStyle = glow;
+      ctx.fillRect(0, 0, 64, 64);
+    }}
+  />
+);
 
 /** What a test mounts, and changes without mounting again: `level` holds the voice at one level in place of the made-up one. */
 type Shown = { entry: string; size: number; mode: AvatarMode; still: boolean; hidden?: boolean; level?: number };

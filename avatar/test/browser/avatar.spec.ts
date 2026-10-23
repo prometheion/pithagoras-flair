@@ -57,6 +57,11 @@ const change = (page: Page, patch: Record<string, unknown>) => page.evaluate((p)
 const counted = (page: Page) => page.evaluate(() => ({ ...(window as any).gl }) as Record<string, number>);
 const avatar = (page: Page) => page.locator(".flair-avatar");
 const drawn = (page: Page) => expect(avatar(page)).toHaveAttribute("data-shown", "drawn", { timeout: 30_000 });
+/** The orb, drawn and not faded out with the model's canvas: Playwright counts an element at opacity 0 as visible. */
+const orbShown = async (page: Page) => {
+  await expect(page.getByTestId("orb")).toBeVisible();
+  await expect(page.getByTestId("orb")).toHaveCSS("opacity", "1");
+};
 /** The list again, as the page asks for it whenever it is shown. */
 const refresh = (page: Page) => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 
@@ -66,7 +71,7 @@ const covered = (page: Page) =>
     () =>
       new Promise<number>((resolve) =>
         requestAnimationFrame(() => {
-          const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar canvas")!;
+          const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar-gl canvas")!;
           const copy = document.createElement("canvas");
           copy.width = gl.width;
           copy.height = gl.height;
@@ -91,7 +96,7 @@ const coloured = (page: Page) =>
     () =>
       new Promise<number>((resolve) =>
         requestAnimationFrame(() => {
-          const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar canvas")!;
+          const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar-gl canvas")!;
           const copy = document.createElement("canvas");
           copy.width = gl.width;
           copy.height = gl.height;
@@ -148,7 +153,7 @@ test("the canvas follows the box from 380 to 100 to 64 pixels without being made
   const [model] = await open(page, request);
   await mount(page, { entry: model.id });
   await drawn(page);
-  const canvas = page.locator(".flair-avatar canvas");
+  const canvas = page.locator(".flair-avatar-gl canvas");
   await canvas.evaluate((c) => ((c as any).first = true));
   const sized = async (size: number) => {
     await change(page, { size });
@@ -192,7 +197,7 @@ test("with less motion asked for, it draws at most 20 frames a second", async ({
 test("a still avatar makes no drawing context: the orb until the model has a portrait, then the portrait", async ({ page, request }) => {
   const [model] = await open(page, request);
   await mount(page, { entry: model.id, still: true });
-  await expect(page.getByTestId("orb")).toBeVisible();
+  await orbShown(page);
   await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
   await refresh(page);
   await expect(page.locator(".flair-avatar-still")).toBeVisible();
@@ -205,7 +210,23 @@ test("a model whose file cannot be fetched draws the orb", async ({ page, reques
   await request.delete(`${API}/models/${model.id}`);
   await mount(page, { entry: model.id });
   await expect(avatar(page)).toHaveAttribute("data-shown", "failed");
-  await expect(page.getByTestId("orb")).toBeVisible();
+  await orbShown(page);
+});
+
+test("the orb is drawn while the model loads", async ({ page, request }) => {
+  const [model] = await open(page, request);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route((url) => url.pathname.endsWith(`/models/${model.id}/file`), async (route) => {
+    await held;
+    await route.continue();
+  });
+  await mount(page, { entry: model.id });
+  await expect(avatar(page)).toHaveAttribute("data-shown", "loading");
+  await orbShown(page);
+  release();
+  await drawn(page);
+  await expect(page.getByTestId("orb")).toHaveCount(0);
 });
 
 test("without WebGL 2 the orb is drawn", async ({ page, request }) => {
@@ -218,7 +239,7 @@ test("without WebGL 2 the orb is drawn", async ({ page, request }) => {
   const [model] = await open(page, request);
   await mount(page, { entry: model.id });
   await expect(avatar(page)).toHaveAttribute("data-shown", "unsupported");
-  await expect(page.getByTestId("orb")).toBeVisible();
+  await orbShown(page);
   expect(await page.evaluate(() => (window as any).harness.failures)).toEqual([]);
 });
 
@@ -227,11 +248,11 @@ test("a lost drawing context shows the orb until it is given back, and the model
   await mount(page, { entry: model.id });
   await drawn(page);
   // Kept from before: a lost context gives no extension.
-  await page.evaluate(() => ((window as any).losing = document.querySelector<HTMLCanvasElement>(".flair-avatar canvas")!.getContext("webgl2")!.getExtension("WEBGL_lose_context")));
+  await page.evaluate(() => ((window as any).losing = document.querySelector<HTMLCanvasElement>(".flair-avatar-gl canvas")!.getContext("webgl2")!.getExtension("WEBGL_lose_context")));
   const lose = (how: "loseContext" | "restoreContext") => page.evaluate((h) => (window as any).losing[h](), how);
   await lose("loseContext");
   await expect(avatar(page)).toHaveAttribute("data-shown", "lost");
-  await expect(page.getByTestId("orb")).toBeVisible();
+  await orbShown(page);
   await lose("restoreContext");
   await drawn(page);
   await expect(page.getByTestId("orb")).toHaveCount(0);
@@ -242,7 +263,7 @@ test("unmounted, it deletes what it uploaded and gives its context back, also af
   const [model] = await open(page, request);
   const context = () =>
     page.evaluate(() => {
-      const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar canvas")!.getContext("webgl2")!;
+      const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar-gl canvas")!.getContext("webgl2")!;
       Object.assign(window, { context: gl, losing: gl.getExtension("WEBGL_lose_context") });
     });
   await mount(page, { entry: model.id });
