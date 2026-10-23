@@ -1,130 +1,145 @@
 import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import type { ServerPortal, ToolGuard } from "@pithagoras/extension-api/server";
-import { Unreachable, type McpClient, type McpResult, type McpTool } from "./mcp";
+import { NotAnswering, type McpClient, type McpTool } from "./mcp";
 
 /**
- * The tools of the server in the container, as the extension's own tool group: each tool the server lists over MCP is
- * registered in every chat's pi (`portal.chats.extend`) under the extension's prefix, listed in Settings → Tools under
- * the extension (`portal.tools.offer`), switched per chat, layer and mode there, and held by the guard like any tool.
- * When the extension is switched off or removed the portal drops what it registered, so the tools leave every chat.
+ * The server's MCP tools as the extension's own: registered in every chat's pi (`portal.chats.extend`), listed in
+ * Settings → Tools under the package's group (`portal.tools.offer`), switched there per chat, agent, project and mode
+ * as any tool is, held by the guard to what each declares, and gone with the extension when it is switched off or
+ * removed, as the portal drops what a package registered.
  *
- * A chat's pi is extended synchronously as it loads, and a promise its factory returns is not waited for, so nothing
- * can be asked of the server there: the tools come from a cache in the extension's own folder (`tools.json`, 0600),
- * written whenever the server answers with a list or instructions that differ from it. That is what lets a chat that
- * loads after a portal restart, before the container has answered, have its tools at once. A change is handed to the
- * open chats (`portal.chats.reload()`), once.
+ * A chat's pi is loaded synchronously and is not waited for, so nothing is asked of the server while a chat loads:
+ * the tools are registered from what the server last listed, kept in `tools.json` in the extension's own folder. A
+ * chat loaded after a portal restart, before the server answers again, has them at once. When the server answers
+ * (the service's look every 30 seconds, and after an install or a start) its list is asked for again, and where it
+ * changed, the open chats are loaded again once, each then having the tools as they are now.
  *
- * Each call goes to the server's tools/call. What it returns goes to the model as it came: its text parts as text and
- * its pictures (screenshots, renders) as pictures, in order. Nothing is written into the chat's folder: the person
- * sees what the server shows in the panel beside the chat.
+ * Each tool is named `<prefix>_<the server's name>`: off pi's own names, off the browser's rules, which a name with
+ * `browser_` in it is held to, and grouped by eye. What it is told to the model is the server's own: its description,
+ * its schema, and the server's MCP instructions as a guideline, which pi prints once however many tools carry it.
+ * One call at a time (`sequential`): one server serves every call, on one thread. What a call returns is outside
+ * content (`outside`): it comes from a scene or a project, which may have come from anywhere.
  */
 
-/** What the cache holds: the image the server ran in, its MCP instructions, and its tools as it listed them. */
+/** What is kept of the server's list, in `tools.json`. */
 interface Cache {
-  image: string;
   instructions: string;
   tools: McpTool[];
 }
 
-const EMPTY: Cache = { image: "", instructions: "", tools: [] };
-
-/** A part of a tool's result as pi takes it. */
+/** A tool's result as pi takes it: text and pictures in the order the server gave them. */
 type Part = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
 
 export interface RelayOptions {
   portal: ServerPortal;
-  /** What every tool's name starts with, before an underscore: "godot" makes the server's `ping` into `godot_ping`. */
+  /** What the tools' names start with, before `_`: `blender`. */
   prefix: string;
+  /** The app's name, as the model is told it is not running: `Blender`. */
+  app: string;
   mcp: McpClient;
-  /** What a call's card says of each tool, by its relayed name, in English: the browser half has the German. */
+  /** What each tool's call is labelled with in pi, by the server's name for it. One not listed is labelled with its name. */
   labels: Record<string, string>;
-  /** The guard's rules after a suspected prompt injection that a call of the tool is the shape of, by relayed name. */
+  /** The guard rules every call of a tool is the shape of, by the server's name for it (see ToolGuard.acts). */
   acts: Record<string, NonNullable<ToolGuard["acts"]>>;
+  /** Where the list is kept: `tools.json` in the extension's own folder. */
   cacheFile: string;
-  /** Whether the server's container exists, as the last look found: asked each time a list is drawn or a chat loads. */
-  installed: () => boolean;
-  /** Said to the model when nothing answers on the server's port. */
-  notRunning: string;
 }
 
 export function relay(options: RelayOptions) {
-  const { portal, prefix, mcp } = options;
-
-  function read(): Cache {
+  const { portal, prefix, mcp, cacheFile } = options;
+  const read = (): Cache | undefined => {
     try {
-      const kept = JSON.parse(readFileSync(options.cacheFile, "utf8")) as Partial<Cache>;
-      return { image: kept.image ?? "", instructions: kept.instructions ?? "", tools: Array.isArray(kept.tools) ? kept.tools : [] };
+      const kept = JSON.parse(readFileSync(cacheFile, "utf8")) as Cache;
+      return Array.isArray(kept.tools) ? kept : undefined;
     } catch {
-      return EMPTY;
+      return undefined;
+    }
+  };
+  let cache = read();
+  /**
+   * Whether the server's container exists, as the service last found it. Until it has looked, a kept list says so:
+   * the list is kept while there is a server, and deleted when it is removed on the page.
+   */
+  let installed = cache !== undefined;
+  const notRunning = `${options.app} is not running. The person can start it in Settings → ${options.app}.`;
+
+  /** A tool's result, from what the server answered: a result it marks as an error is thrown, so pi marks the call failed. */
+  function partsOf(result: Awaited<ReturnType<McpClient["callTool"]>>): Part[] {
+    const parts: Part[] = [];
+    for (const part of result.content ?? []) {
+      if (part.type === "text") parts.push({ type: "text", text: String(part.text) });
+      else if (part.type === "image") parts.push({ type: "image", data: String(part.data), mimeType: String(part.mimeType) });
+    }
+    if (result.isError) throw new Error(parts.filter((p) => p.type === "text").map((p) => (p as { text: string }).text).join("\n") || `${options.app} refused the call`);
+    return parts;
+  }
+
+  function register(pi: any): void {
+    if (!installed || !cache) return;
+    const guideline = cache.instructions.trim();
+    for (const tool of cache.tools) {
+      const acts = options.acts[tool.name];
+      const guard: ToolGuard = { outside: true, ...(acts ? { acts } : {}) };
+      pi.registerTool({
+        name: `${prefix}_${tool.name}`,
+        label: options.labels[tool.name] ?? tool.name,
+        description: tool.description ?? "",
+        parameters: tool.inputSchema,
+        ...(guideline ? { promptGuidelines: [guideline] } : {}),
+        executionMode: "sequential",
+        guard,
+        async execute(_id: string, params: Record<string, unknown>, signal?: AbortSignal) {
+          let result;
+          try {
+            result = await mcp.callTool(tool.name, params ?? {}, signal);
+          } catch (e) {
+            if (e instanceof NotAnswering) throw new Error(notRunning);
+            throw e;
+          }
+          return { content: partsOf(result), details: {} };
+        },
+      });
     }
   }
-  let cache = read();
 
-  /** The model's text of a call that went wrong: its text parts, which is where the server says what. */
-  const textOf = (result: McpResult) => result.content.flatMap((p) => (p.type === "text" ? [String(p.text)] : [])).join("\n");
+  portal.tools.offer(() => (installed && cache ? cache.tools.map((t) => ({ name: `${prefix}_${t.name}`, description: t.description ?? "" })) : []));
+  portal.chats.extend((pi) => register(pi));
 
-  function definition(tool: McpTool) {
-    const name = `${prefix}_${tool.name}`;
-    return {
-      name,
-      label: options.labels[name] ?? name,
-      description: tool.description,
-      // Both servers describe their arguments in JSON Schema, which is what pi takes.
-      parameters: tool.inputSchema,
-      // The server's own instructions, which pi says once however many tools carry them.
-      ...(cache.instructions ? { promptGuidelines: [cache.instructions] } : {}),
-      // One server serves every call in turn, and two edits racing in one editor help nobody.
-      executionMode: "sequential",
-      // What it returns comes from projects and files that may have come from anywhere: outside content.
-      guard: { outside: true, ...(options.acts[name] ? { acts: options.acts[name] } : {}) },
-      async execute(_id: string, params: Record<string, unknown> | undefined, signal?: AbortSignal) {
-        let result: McpResult;
-        try {
-          result = await mcp.callTool(tool.name, params ?? {}, signal);
-        } catch (e) {
-          throw e instanceof Unreachable ? new Error(options.notRunning) : e;
-        }
-        if (result.isError) throw new Error(textOf(result) || `${name} failed`);
-        const content = result.content.flatMap((p): Part[] =>
-          p.type === "text" ? [{ type: "text", text: String(p.text) }] : p.type === "image" ? [{ type: "image", data: String(p.data), mimeType: String(p.mimeType) }] : [],
-        );
-        return { content, details: {} };
-      },
-    };
-  }
-
-  portal.tools.offer(() => (options.installed() ? cache.tools.map((t) => ({ name: `${prefix}_${t.name}`, description: t.description })) : []));
-  portal.chats.extend((pi) => {
-    if (!options.installed()) return;
-    for (const tool of cache.tools) pi.registerTool(definition(tool));
-  });
-
-  function keep(next: Cache) {
-    writeFileSync(`${options.cacheFile}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
-    renameSync(`${options.cacheFile}.tmp`, options.cacheFile);
-    cache = next;
-  }
+  const reload = () =>
+    void portal.chats.reload().catch((e) => portal.log(`could not give the open chats ${options.app}'s tools: ${(e as Error).message}`));
 
   return {
-    /** Whether a list of tools is kept: the server answered with one since it was installed. */
-    known: () => cache.tools.length > 0,
-    tools: () => cache.tools,
+    /** The tools as they are registered now, by the server's names: for the routes and the tests. */
+    tools: () => (installed && cache ? cache.tools.map((t) => t.name) : []),
     /**
-     * Asks the running server for its instructions and its tools, and keeps them. Where either differs from what was
-     * kept, the open chats are given the new set. Answers whether they were.
+     * Whether the server's container exists, as the service found it. A change hands the open chats the tools, or
+     * takes them away.
      */
-    async refresh(image: string): Promise<boolean> {
-      const { instructions } = await mcp.initialize();
-      const tools = await mcp.listTools();
-      const changed = instructions !== cache.instructions || JSON.stringify(tools) !== JSON.stringify(cache.tools);
-      if (changed || image !== cache.image) keep({ image, instructions, tools });
-      if (changed) await portal.chats.reload();
-      return changed;
+    setInstalled(now: boolean): void {
+      if (now === installed) return;
+      installed = now;
+      if (cache) reload();
     },
-    /** The server is gone: its tools are no longer kept, and are offered again only once a new one has answered. */
+    /**
+     * The server answers: its list and its instructions asked for again, and kept where they changed, which loads the
+     * open chats again once.
+     */
+    async refresh(): Promise<void> {
+      const [info, tools] = await Promise.all([mcp.initialize(), mcp.listTools()]);
+      const next: Cache = { instructions: info.instructions, tools: tools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) };
+      if (cache && JSON.stringify(cache) === JSON.stringify(next)) return;
+      cache = next;
+      writeFileSync(`${cacheFile}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
+      renameSync(`${cacheFile}.tmp`, cacheFile);
+      if (installed) reload();
+    },
+    /** The server is removed: nothing is offered or registered any more, and the open chats are loaded again without the tools. */
     forget(): void {
-      rmSync(options.cacheFile, { force: true });
-      cache = EMPTY;
+      const had = installed && cache !== undefined;
+      cache = undefined;
+      installed = false;
+      rmSync(cacheFile, { force: true });
+      if (had) reload();
     },
   };
 }

@@ -1,86 +1,94 @@
 /**
- * A JSON-RPC client for the MCP endpoint of a server in this repository's containers: POST /mcp on the portal's
- * loopback with the server's token. Those servers answer each POST with JSON and keep no session (MCP's Streamable
- * HTTP without its event stream), so this speaks JSON only, the four methods the relay needs: initialize, ping,
- * tools/list and tools/call.
+ * A client for the MCP endpoint of the extension's own server (`POST /mcp` on the container's port, on the portal's
+ * loopback): JSON-RPC over plain HTTP, every request with the server's token. Both servers it is written for answer
+ * each POST with one JSON reply and keep no session (their server.py), so it speaks JSON only: no event stream is
+ * read, and no session id is kept.
  *
- * A call waits as long as the portal's own fetches do (the portal's dispatcher waits 30 minutes for an answer), which
- * covers a long export or recording. Its AbortSignal ends the request; the server goes on with what it was doing, as
- * neither server reads `notifications/cancelled`.
+ * A call that takes long (a render) is waited for: the portal's own fetch waits half an hour for an answer. Its
+ * AbortSignal ends the request; the server goes on with what it was doing, as neither server reads
+ * `notifications/cancelled`.
  */
 
-/** What a tool says it takes and does, as tools/list gives it. */
+/** A tool as the server lists it (`tools/list`). */
 export interface McpTool {
   name: string;
-  description: string;
+  description?: string;
   inputSchema: Record<string, unknown>;
 }
 
-/** One part of what a tool returned: text, or a picture as base64. */
-export type McpPart = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | { type: string; [key: string]: unknown };
-
+/** What a tool call came back with (`tools/call`): MCP's own content parts, in order. */
 export interface McpResult {
-  content: McpPart[];
+  content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string } | { type: string; [key: string]: unknown })[];
   isError?: boolean;
 }
 
-/** The server did not answer at all: nothing listens on its port, or the connection broke. Not a refusal of its own. */
-export class Unreachable extends Error {}
+/** What the server says of itself as the client starts (`initialize`). */
+export interface McpServerInfo {
+  instructions: string;
+  version: string;
+}
 
-export const PROTOCOL = "2025-06-18";
+/** The server could not be reached at all: nothing answers on its port. */
+export class NotAnswering extends Error {}
 
-export function mcpClient(options: { port: () => number; token: () => string; host?: string }) {
+/** The protocol version asked for: one both servers take. */
+export const PROTOCOL_VERSION = "2025-06-18";
+
+export function mcpClient(options: { url: () => string; token: () => string }) {
   let id = 0;
-  const url = () => `http://${options.host ?? "127.0.0.1"}:${options.port()}/mcp`;
 
-  /** One JSON-RPC request: its result, or its error as an Error with the server's message. */
+  /** One JSON-RPC request. The server's error is thrown with its message; an answer that is not JSON is an error too. */
   async function call<T>(method: string, params: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
     let answer: Response;
     try {
-      answer = await fetch(url(), {
+      answer = await fetch(options.url(), {
         method: "POST",
-        headers: { authorization: `Bearer ${options.token()}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        headers: {
+          authorization: `Bearer ${options.token()}`,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
         body: JSON.stringify({ jsonrpc: "2.0", id: ++id, method, params }),
         signal,
       });
     } catch (e) {
       if (signal?.aborted) throw e;
-      throw new Unreachable((e as Error & { cause?: Error }).cause?.message ?? (e as Error).message);
+      throw new NotAnswering(`Nothing answers at ${options.url()}: ${(e as Error).message}`);
     }
     const text = await answer.text();
-    let said: { result?: T; error?: { message?: string } | string };
+    let body: { result?: T; error?: { message?: string } };
     try {
-      said = JSON.parse(text);
+      body = JSON.parse(text);
     } catch {
       throw new Error(`The server answered ${answer.status} with something that is not JSON: ${text.slice(0, 200)}`);
     }
-    // A JSON-RPC error has a message; a refusal before JSON-RPC (a wrong token: 401) says why as text.
-    if (typeof said.error === "object" && said.error) throw new Error(said.error.message ?? `${method} failed`);
-    if (!answer.ok) throw new Error(`The server answered ${answer.status}${typeof said.error === "string" ? `: ${said.error}` : ""}`);
-    return said.result as T;
+    if (body.error) throw new Error(body.error.message ?? `The server refused ${method}`);
+    if (!answer.ok) throw new Error(`The server answered ${answer.status} to ${method}`);
+    return body.result as T;
   }
 
   return {
     call,
-    /** What the server is and what it tells its clients: its MCP instructions and its version. */
-    async initialize(): Promise<{ instructions: string; version: string }> {
-      const r = await call<{ instructions?: string; serverInfo?: { version?: string } }>("initialize", {
-        protocolVersion: PROTOCOL,
+    async initialize(): Promise<McpServerInfo> {
+      const result = await call<{ instructions?: string; serverInfo?: { version?: string } }>("initialize", {
+        protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
         clientInfo: { name: "pithagoras-flair", version: "1" },
       });
-      return { instructions: r.instructions ?? "", version: r.serverInfo?.version ?? "" };
+      return { instructions: result.instructions ?? "", version: result.serverInfo?.version ?? "" };
     },
-    /** Whether the server answers, with this token, within two seconds: the server itself, not the program it runs. */
-    async ping(): Promise<boolean> {
+    /** Whether the server answers, with its token: the server's own `ping`, answered by its HTTP thread. */
+    async ping(signal?: AbortSignal): Promise<boolean> {
       try {
-        await call("ping", {}, AbortSignal.timeout(2_000));
+        await call("ping", {}, signal);
         return true;
       } catch {
         return false;
       }
     },
-    listTools: async (): Promise<McpTool[]> => (await call<{ tools: McpTool[] }>("tools/list")).tools,
+    async listTools(): Promise<McpTool[]> {
+      return (await call<{ tools: McpTool[] }>("tools/list")).tools;
+    },
     callTool: (name: string, args: Record<string, unknown>, signal?: AbortSignal) => call<McpResult>("tools/call", { name, arguments: args }, signal),
   };
 }

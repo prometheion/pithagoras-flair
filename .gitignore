@@ -2,8 +2,9 @@ node_modules/
 .DS_Store
 *.log
 *.tgz
-# What a build makes, in each extension's folder: published, not kept in git.
+# What each extension's build makes (npm pack builds it first): published, not kept in git.
 /*/web/
 /*/server.js
 # Pithagoras, fetched and built for the portal-tier tests (scripts/pithagoras.sh).
 /.pithagoras/
+__pycache__/

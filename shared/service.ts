@@ -1,282 +1,374 @@
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
+import type { ServerPortal } from "@pithagoras/extension-api/server";
 import type { ContainerSpec, Docker } from "./docker-api";
-import { gpuProbe, pickCard, type Probed } from "./gpu";
+import { mostFree, probe, type Card, type Optix, type Probed } from "./gpu";
+import type { McpClient } from "./mcp";
+import type { Relay } from "./relay";
+import type { Store } from "./store";
 
 /**
- * The server's container, run through Docker for extensions (`pithagoras-docker`, which the extension requires), the
- * way Voice runs its own: made from the extension's image with the extension's spec, started, stopped and removed from
- * the extension's page in Settings, and looked after while the portal runs.
+ * The server's container: made, started, stopped and removed through Docker for extensions (`pithagoras-docker`,
+ * which the extension requires), as Voice runs its own. What the extension may do with it is what Docker lets any
+ * extension do with its own: it carries the extension's name, and a container of that name that is not the
+ * extension's is left alone.
  *
- * Docker restarts it as it restarts Voice's, Browser's and Understory's (`RestartPolicy: unless-stopped`, which the
- * spec sets): after it exits, and as Docker starts after the host restarts, unless the person stopped it (Stop on the
- * page, or in Settings → Docker), when it stays stopped. Nothing here ever starts one the person stopped. And the
- * extension's own stop (the half stopping, which happens at every portal restart and every restart of Docker's half)
- * never stops it: a stop through Docker would count as the person's and keep it down after a reboot. So the container
- * outlives the extension when the extension is switched off or removed; its page says to Remove the server first.
+ * Docker starts it again after it exits and as the host starts, unless the person stopped it (`unless-stopped`, the
+ * rule for every service container an extension runs). The half never stops it: a stop of the half also comes with
+ * every restart of the portal and of Docker's half, and a stop through Docker would count as the person's and keep
+ * the server down after a reboot. So it keeps running when the extension is switched off or uninstalled, as the
+ * portal has no uninstall hook: the Settings page says to remove the server there first.
  *
- * A container is made from a spec, which Docker cannot change afterwards. The spec the extension wants now (its image,
- * the card, what else the extension puts in it) is hashed into a label, `pithagoras.flair-spec`, everything but the
- * network: a container whose label differs is stale, and so is one whose network is not the portal's loopback as it is
- * now (`sharedNetwork()`: a portal run in Docker has another container id after every update). A running stale
- * container is made again at once, keeping its volume, and a stopped one at its next Start: Voice's rule, with a hash
- * in place of Voice's recipe label. The new image is downloaded first, while the old container goes on running.
+ * What the container is made with is hashed into a label of its own (`pithagoras.flair-spec`): everything but its
+ * network, which is checked as it is. A container whose label is not the hash of what would be made now (another
+ * image after an update, another card) or whose network is not the portal's loopback as it is now (the portal's own
+ * container was made again) is stale. A running one is made again at once, the volume kept; a stopped one at its next
+ * Start. That is Voice's rule, with a hash for Voice's recipe label.
  */
 
-export const SPEC_LABEL = "pithagoras.flair-spec";
-
-export type ServiceState = "unavailable" | "absent" | "foreign" | "downloading" | "starting" | "running" | "stopped" | "failed";
-
-export interface ServiceStatus {
-  state: ServiceState;
-  /** Something is under way: a download, the container being made, or removed. The page waits while it is. */
-  busy: boolean;
-  /** The last line of the image's download, while there is one. */
-  progress: string;
-  /** What went wrong last, in Docker's words or the page's fixed sentences. */
-  error: string;
-  /** The end of what the container wrote (200 lines), as text. */
-  logs: string;
+/** The names a service goes by, each one the portal's environment can change: see `namesFrom`. */
+export interface Names {
   container: string;
   volume: string;
-  /** The image the container runs, and the one the extension runs it from now. */
-  image?: string;
-  wanted: string;
-  /** The card the container holds, as Docker was asked for it (a UUID, or an index the host's owner pinned). */
-  card?: string;
-  /** The container is made with another spec than the extension's now, or on another network: it is made again. */
-  stale?: boolean;
-  /** For `foreign`: whose it is ("" for a container nobody made through Docker for extensions). */
-  owner?: string;
-}
-
-export interface Plan {
-  /** The card to give the container, as Docker takes it (a UUID, or an index); none for no GPU. */
-  card?: string;
-  networkMode: string;
-}
-
-export interface ServiceOptions {
-  docker: () => Docker;
-  /** This extension's name, which its containers carry as their owner. */
-  extension: string;
-  log: (text: string) => void;
-  container: string;
-  volume: string;
-  /** The GPU probe's container. */
+  /** The short-lived container the GPU probe runs in. */
   probe: string;
+  /** The server's port on the portal's loopback. */
+  port: number;
   image: string;
-  /** The card the host's owner pinned the server to (`PITHAGORAS_<APP>_GPU`): a UUID or an index. */
-  pinned?: string;
-  /** The card chosen on the page, by UUID; "" for the one with the most free memory. */
-  chosen: () => string;
-  /** The container's spec for a plan: the extension's own. */
-  spec: (plan: Plan) => ContainerSpec;
-  /** Whether the server in the running container answers. */
-  ready: () => Promise<boolean>;
-  /** A run of the container answered for the first time: a new container, or the same one started again. */
-  onReady?: (image: string) => Promise<unknown>;
-  /**
-   * Whether the container was there before the half started, as far as the extension can tell without asking Docker
-   * (its cache of the server's tools): what `installed()` answers until the first look.
-   */
-  wasInstalled: () => boolean;
-  /** The container came to be, or is gone (removed here, or by the person in Settings → Docker). */
-  onInstalled?: (installed: boolean) => void;
+  /** A card the host's owner pinned, by UUID or index: the only one the probe asks for and the server is given. */
+  gpu?: string;
 }
 
-type Inspected = {
-  Id?: string;
+/**
+ * The names, with what the portal's environment says in place of each default: `PITHAGORAS_<APP>_CONTAINER`,
+ * `_VOLUME`, `_PORT`, `_IMAGE` and `_GPU`. For a second portal on the same Docker, and for tests, which must not
+ * meet the containers of a portal that is in use.
+ */
+export function namesFrom(env: NodeJS.ProcessEnv, app: string, defaults: { container: string; port: number; image: string }): Names {
+  const key = (name: string) => env[`PITHAGORAS_${app.toUpperCase()}_${name}`]?.trim() || undefined;
+  const container = key("CONTAINER") ?? defaults.container;
+  const port = Number(key("PORT"));
+  return {
+    container,
+    volume: key("VOLUME") ?? `${container}-data`,
+    probe: `${container}-probe`,
+    port: Number.isInteger(port) && port > 0 && port < 65536 ? port : defaults.port,
+    image: key("IMAGE") ?? defaults.image,
+    ...(key("GPU") ? { gpu: key("GPU") } : {}),
+  };
+}
+
+/** What a container is made for: the card it is given (none: no GPU), where the OptiX weights are, its network, and its token. */
+export interface Plan {
+  card?: { uuid: string };
+  optix: Optix;
+  network: string;
+  token: string;
+}
+
+/** How the server stands, as the Settings page and the panel are told. */
+export interface Status {
+  state: "unavailable" | "absent" | "foreign" | "downloading" | "starting" | "running" | "stopped" | "failed";
+  /** An install, a start or a removal is under way. */
+  busy: boolean;
+  /** The download's last line, while one is under way. */
+  progress: string;
+  /** Why the last install or start failed, or why Docker stopped the container. */
+  error: string;
+  /** The end of what the container wrote (200 lines), colours taken out. */
+  log: string;
+  container: string;
+  volume: string;
+  image: string;
+  /** The card the container holds, by UUID, where it holds one. */
+  card?: string;
+  /** Docker is starting it again after it exited, which a stop ends. */
+  retrying?: boolean;
+}
+
+/** Of Docker's inspect body, what is read here. */
+interface Inspected {
+  Image?: string;
   Config?: { Image?: string; Labels?: Record<string, string> | null };
-  HostConfig?: { NetworkMode?: string; DeviceRequests?: { DeviceIDs?: string[] | null }[] | null };
-  State?: { Running?: boolean; Restarting?: boolean; ExitCode?: number; StartedAt?: string; Error?: string };
-};
+  HostConfig?: { NetworkMode?: string; DeviceRequests?: { DeviceIDs?: string[] | null }[] | null; Mounts?: { Target?: string }[] | null };
+  State?: { Running?: boolean; Restarting?: boolean; ExitCode?: number; Error?: string; StartedAt?: string };
+  RestartCount?: number;
+}
 
-/** The hash of a spec, as its label carries it: everything of it but the network, which is checked on its own. */
+export const SPEC_LABEL = "pithagoras.flair-spec";
+const RESTART = { Name: "unless-stopped" };
+
+/** What a spec is hashed by: everything but its network, which is compared as it is. */
 export function specHash(spec: ContainerSpec): string {
-  const { HostConfig, Labels, ...rest } = spec as ContainerSpec & { HostConfig?: Record<string, unknown>; Labels?: Record<string, string> };
+  const { HostConfig, Labels: _labels, ...rest } = spec as ContainerSpec & { HostConfig?: Record<string, unknown> };
   const { NetworkMode: _network, ...host } = HostConfig ?? {};
-  const { [SPEC_LABEL]: _own, ...labels } = Labels ?? {};
-  return createHash("sha256").update(JSON.stringify({ ...rest, Labels: labels, HostConfig: host })).digest("hex").slice(0, 16);
+  return createHash("sha256").update(JSON.stringify({ ...rest, HostConfig: host })).digest("hex").slice(0, 16);
 }
 
-/** The spec with its hash in its label. */
-export function labelled(spec: ContainerSpec): ContainerSpec {
-  const labels = { ...((spec.Labels as Record<string, string> | undefined) ?? {}) };
-  return { ...spec, Labels: { ...labels, [SPEC_LABEL]: specHash(spec) } };
+/** The spec as it is made: the restart policy every service container has, and the hash of the rest as its label. */
+export function stamped(spec: ContainerSpec): ContainerSpec {
+  const host = (spec.HostConfig ?? {}) as Record<string, unknown>;
+  const withPolicy = { ...spec, HostConfig: { ...host, RestartPolicy: RESTART } };
+  return { ...withPolicy, Labels: { ...((spec.Labels as Record<string, string> | undefined) ?? {}), [SPEC_LABEL]: specHash(withPolicy) } };
 }
-
-/** The card a container was made with, as Docker was asked for it; none for one made without a GPU. */
-export const heldCard = (found: Inspected | undefined): string | undefined => found?.HostConfig?.DeviceRequests?.flatMap((r) => r.DeviceIDs ?? [])[0];
-
-const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 
 /** Docker's answer that there is no such container or volume, which is no failure where nothing has to be there. */
 function absent(e: unknown): void {
   if ((e as { status?: number }).status !== 404) throw e;
 }
 
+/** The card a container was given, by the id Docker was asked for: the UUID, as every container made here asks by it. */
+const heldCard = (detail: Inspected | undefined): string | undefined => detail?.HostConfig?.DeviceRequests?.flatMap((r) => r.DeviceIDs ?? [])[0];
+
+/** How long a server may take to answer after its start before the half stops waiting for it (the 30 s look goes on). */
+const ANSWER_WITHIN_MS = 180_000;
+
+export interface ServiceOptions {
+  portal: ServerPortal;
+  docker: () => Docker;
+  /** The app's name, as people read it: `Blender`. */
+  app: string;
+  names: Names;
+  store: Store;
+  relay: Relay;
+  mcp: McpClient;
+  /** What the container is made with for a plan: Docker's create body, with the plan's network. */
+  spec: (plan: Plan) => ContainerSpec;
+  /** Runs the GPU probe; the tests give their own. */
+  probe?: (docker: Docker, name: string, pinned?: string) => Promise<Probed>;
+}
+
 export function service(options: ServiceOptions) {
-  const { docker } = options;
-  const gpus = gpuProbe({ docker, name: options.probe, pinned: options.pinned });
+  const { portal, app, names, store, relay, mcp } = options;
+  const docker = options.docker;
+  const runProbe = options.probe ?? probe;
   let pending = false;
-  let phase: "downloading" | "making" | "removing" | undefined;
+  let downloading = false;
   let progress = "";
   let error = "";
-  /** Whether the container is there, as the last look found; before the first look, `wasInstalled()`. */
-  let installed: boolean | undefined;
-  /** The run of the container (its id and when it started) that last answered, so each run is told once (`onReady`). */
-  let answered = "";
+  /** The run of the container (Docker's `State.StartedAt`) the server last answered in: see `retrying`. */
+  let answered: string | undefined;
 
-  const setInstalled = (now: boolean) => {
-    const was = installed ?? options.wasInstalled();
-    installed = now;
-    if (was !== now) options.onInstalled?.(now);
-  };
+  /**
+   * Docker is starting the container again by itself after it exited, and goes on doing so: running to Docker while it
+   * waits for the next try (`Restarting`), and in a try one it began (`RestartCount`) that the server has not answered
+   * in. One it answered in came back. A stop ends the tries. Voice's rule.
+   */
+  const retrying = (detail: Inspected | undefined) =>
+    detail?.State?.Running === true && Boolean(detail.State.Restarting || (detail.RestartCount && detail.State.StartedAt !== answered));
 
-  /** The card the container is to have: the pinned one, else the one chosen on the page, else the one it holds. */
-  const wantedCard = (held: string | undefined) => options.pinned || options.chosen() || held;
-
-  const isStale = (found: Inspected, networkMode: string) =>
-    found.HostConfig?.NetworkMode !== networkMode || found.Config?.Labels?.[SPEC_LABEL] !== specHash(options.spec({ card: wantedCard(heldCard(found)), networkMode }));
-
-  /** The container, where it is this extension's; a `Foreign` error for one by that name that is someone else's. */
-  async function inspect(): Promise<Inspected | undefined> {
+  /** The container by its name: nothing where there is none, `foreign` where it is not this extension's. */
+  async function own(): Promise<Inspected | "foreign" | undefined> {
     const d = docker();
-    const found = await d.containers.get(options.container);
+    const found = await d.containers.get(names.container);
     if (!found) return undefined;
-    if (found.owner !== options.extension) throw new Foreign(options.container, found.owner);
-    return (await d.containers.inspect(options.container)) as Inspected | undefined;
+    if (found.owner !== portal.extension) return "foreign";
+    // One removed since it was looked at has nothing to read.
+    return ((await d.containers.inspect(names.container).catch((e) => absent(e))) as Inspected | undefined) ?? undefined;
   }
 
-  async function status(): Promise<ServiceStatus> {
-    const d = docker();
-    const base = { busy: pending, progress: pending ? progress : "", error, logs: "", container: options.container, volume: options.volume, wanted: options.image };
-    if (!(await d.available())) return { ...base, state: "unavailable", error: error || "Docker cannot be reached." };
-    let found: Inspected | undefined;
-    try {
-      found = await inspect();
-    } catch (e) {
-      if (!(e instanceof Foreign)) throw e;
-      setInstalled(false);
-      return { ...base, state: "foreign", owner: e.owner };
-    }
-    if (!found) {
-      if (!pending) setInstalled(false);
-      return { ...base, state: pending ? (phase === "downloading" ? "downloading" : "starting") : "absent" };
-    }
-    setInstalled(true);
-    const logs = (await d.containers.logs(options.container, { tail: 200 }).catch((e) => (absent(e), ""))).replace(ANSI, "");
-    // One Docker waits to start again is running to Docker, with nothing running in it.
-    const running = found.State?.Running === true && !found.State.Restarting;
-    const ready = running && (await options.ready());
-    const run = `${found.Id}:${found.State?.StartedAt}`;
-    if (ready && run !== answered && options.onReady) {
-      answered = run;
-      await options.onReady(found.Config?.Image ?? options.image).catch((e) => options.log(`could not read the server's tools: ${(e as Error).message}`));
-    }
-    const stale = running ? isStale(found, await d.sharedNetwork()) : false;
-    // Docker starting it again by itself is a server that exited; a container that is not running and ended with a
-    // code is one that failed (a stop ends the server with 0).
-    const failed = !ready && (found.State?.Restarting === true || (!running && Boolean(found.State?.ExitCode)));
-    const state: ServiceState = pending ? (phase === "downloading" ? "downloading" : "starting") : ready ? "running" : failed ? "failed" : running ? "starting" : "stopped";
-    return { ...base, state, logs, image: found.Config?.Image, card: heldCard(found), stale, ...(failed && !error ? { error: found.State?.Error || "The server exited. Its log says why." } : {}) };
+  // --- the GPU ---
+
+  let probed: Probed | undefined;
+  let probing: Promise<Probed> | undefined;
+  /** One probe at a time: the page asks as it opens, an install asks when nothing was probed yet. */
+  function detect(): Promise<Probed> {
+    probing ??= runProbe(docker(), names.probe, names.gpu)
+      .then((found) => (probed = found))
+      .finally(() => {
+        probing = undefined;
+      });
+    return probing;
   }
 
   /**
-   * Makes the container where there is none, or where it is stale, and starts it: in the background, with the page
-   * told how it goes (`busy`, `progress`, `error`). A container that is as it should be is only started.
+   * The card the server is to be on: the one the host's owner pinned (the probe asked for it alone); else the one chosen
+   * on the page, if it is there; else the one the container holds now, so that the most free memory, which the server's
+   * own use changes, does not move it; else the card with the most free memory. Without a probe in this run of the half,
+   * the container keeps its card unless another was chosen.
    */
-  async function up(): Promise<void> {
-    if (pending) throw new Error("Wait until what is under way is done.");
+  function wantedCard(detail: Inspected | undefined): { uuid: string } | undefined {
+    const chosen = names.gpu ? "" : (store.setting("gpu") ?? "");
+    const held = heldCard(detail);
+    if (!probed) return chosen ? { uuid: chosen } : held ? { uuid: held } : undefined;
+    if (!probed.cards.length) return undefined;
+    if (names.gpu) return { uuid: probed.cards[0].uuid };
+    const card = probed.cards.find((c) => c.uuid === chosen) ?? probed.cards.find((c) => c.uuid === held) ?? mostFree(probed.cards);
+    return card && { uuid: card.uuid };
+  }
+
+  /** Where the OptiX weights are for the plan: as probed, else as the container was made (bound from the host, or not). */
+  function wantedOptix(detail: Inspected | undefined): Optix {
+    if (probed) return probed.optix;
+    return detail?.HostConfig?.Mounts?.some((m) => m.Target === "/usr/share/nvidia/nvoptix.bin") ? "host" : "none";
+  }
+
+  async function wantedSpec(detail: Inspected | undefined): Promise<ContainerSpec> {
+    const network = await docker().sharedNetwork();
+    return stamped(options.spec({ card: wantedCard(detail), optix: wantedOptix(detail), network, token: store.token() }));
+  }
+
+  const current = (detail: Inspected, spec: ContainerSpec) =>
+    detail.Config?.Labels?.[SPEC_LABEL] === (spec.Labels as Record<string, string>)[SPEC_LABEL] &&
+    detail.HostConfig?.NetworkMode === (spec.HostConfig as { NetworkMode?: string }).NetworkMode;
+
+  // --- how it stands ---
+
+  async function status(): Promise<Status> {
+    const base = { busy: pending, progress: downloading ? progress : "", container: names.container, volume: names.volume, image: names.image };
     const d = docker();
-    if (!(await d.available())) throw new Error("Docker cannot be reached.");
-    const found = await inspect();
-    const networkMode = await d.sharedNetwork();
-    if (found && !isStale(found, networkMode)) {
-      await d.containers.start(options.container);
-      error = "";
-      return;
+    if (!(await d.available())) return { ...base, state: "unavailable", error: "", log: "" };
+    const detail = await own();
+    if (detail === "foreign") {
+      relay.setInstalled(false);
+      return { ...base, state: "foreign", error: "", log: "" };
     }
+    relay.setInstalled(detail !== undefined);
+    // One Docker waits to start again is running to Docker, with nothing running in it.
+    const running = detail?.State?.Running === true && !detail.State.Restarting;
+    let problem = error;
+    if (running && !pending) {
+      try {
+        if (!current(detail!, await wantedSpec(detail))) {
+          void install().catch((e) => portal.log(`could not make the ${app} container again: ${(e as Error).message}`));
+          return { ...base, busy: true, state: "starting", error: "", log: "" };
+        }
+      } catch (e) {
+        problem = (e as Error).message;
+      }
+    }
+    // Tty is on, so the log is plain text, colours aside.
+    const written = detail ? await d.containers.logs(names.container, { tail: 200 }).catch((e) => (absent(e), "")) : "";
+    const log = written.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\r/g, "");
+    const ready = running && (await mcp.ping(AbortSignal.timeout(3000)));
+    if (ready) answered = detail!.State!.StartedAt;
+    const retried = retrying(detail);
+    const failed = !ready && (retried || (!running && Boolean(detail?.State?.ExitCode)));
+    const state: Status["state"] = pending ? (downloading ? "downloading" : "starting") : ready ? "running" : failed ? "failed" : running ? "starting" : detail ? "stopped" : "absent";
+    if (failed && !problem) problem = detail?.State?.Error || `${app} exited. Its log says why.`;
+    return { ...base, state, error: problem, log, ...(detail && heldCard(detail) ? { card: heldCard(detail) } : {}), ...(detail?.Config?.Image ? { image: detail.Config.Image } : {}), retrying: retried };
+  }
+
+  /** After a start: waits for the server to answer, then asks for its tools. The look every 30 seconds does the same. */
+  async function whenAnswering(): Promise<void> {
+    const until = Date.now() + ANSWER_WITHIN_MS;
+    while (Date.now() < until) {
+      if (await mcp.ping(AbortSignal.timeout(3000))) return relay.refresh();
+      // Not a wait that keeps the portal's process from ending.
+      await delay(1000, undefined, { ref: false });
+    }
+  }
+
+  // --- what the person asks for ---
+
+  /**
+   * Installs the server, or starts it: the GPU probed (once in each run of the half, and again as the page opens),
+   * the image downloaded where it is not there yet, the volume made, and the container made where there is none or
+   * it is stale, then started. In the background: the page follows it in `status`. A failure is `error` there.
+   */
+  async function install(): Promise<void> {
+    if (pending) throw new Error(`${app} is being set up already.`);
+    const d = docker();
+    if (!(await d.available())) throw new Error("Docker does not answer.");
+    if ((await own()) === "foreign") throw new Error(`A container named ${names.container} is there that is not this extension's. Rename or remove it first.`);
     pending = true;
     error = "";
     progress = "";
-    phase = "downloading";
     void (async () => {
       try {
-        // A new container takes the card asked for, else the one it had, else (a first install) the one with the most room.
-        let card = wantedCard(heldCard(found));
-        if (!card && !found) card = pickCard((await gpus.probe()).cards)?.uuid;
-        await d.images.ensure(options.image, (s) => {
-          if (s.active && s.line !== "starting") progress = s.line;
+        if (!probed) await detect();
+        downloading = true;
+        await d.images.ensure(names.image, (state) => {
+          if (state.active && state.line !== "starting") progress = state.line;
         });
-        phase = "making";
-        await d.volumes.create(options.volume);
-        await d.containers.create(options.container, labelled(options.spec({ card, networkMode })));
-        setInstalled(true);
-        await d.containers.start(options.container);
+        downloading = false;
+        await d.volumes.create(names.volume);
+        const detail = await own();
+        if (detail === "foreign") throw new Error(`A container named ${names.container} is there that is not this extension's. Rename or remove it first.`);
+        const spec = await wantedSpec(detail);
+        if (detail && current(detail, spec)) {
+          // One Docker is starting again is running to Docker: stopped first, so this start is a start of its own.
+          if (retrying(detail)) await d.containers.stop(names.container);
+          await d.containers.start(names.container);
+        } else {
+          // Made again where it is stale: the volume, with the projects, stays.
+          await d.containers.create(names.container, spec);
+          await d.containers.start(names.container);
+        }
+        relay.setInstalled(true);
+        void whenAnswering().catch((e) => portal.log(`could not read ${app}'s tools: ${(e as Error).message}`));
       } catch (e) {
         error = (e as Error).message;
-        options.log(`could not bring up ${options.container}: ${error}`);
       } finally {
         pending = false;
-        phase = undefined;
+        downloading = false;
+        progress = "";
       }
     })();
   }
 
-  return {
-    status,
-    install: up,
-    start: up,
-    async stop(): Promise<void> {
-      if (pending) throw new Error("Wait until what is under way is done.");
-      await docker().containers.stop(options.container);
-      error = "";
-    },
-    /** The container goes, and with `removeData` the volume: the projects in it. The image stays (other containers may use it). */
-    async uninstall(removeData: boolean): Promise<void> {
-      if (pending) throw new Error("Wait until what is under way is done.");
-      pending = true;
-      phase = "removing";
-      error = "";
-      try {
-        const d = docker();
-        if (await inspect()) await d.containers.remove(options.container);
-        setInstalled(false);
-        if (removeData) await d.volumes.remove(options.volume).catch(absent);
-      } finally {
-        pending = false;
-        phase = undefined;
-      }
-    },
-    /**
-     * What the maintain loop does every 30 s, as Voice's does: looks, which tells a run that answers for the first time
-     * (`onReady`) and a container that went; and makes a running stale container again. A stopped one is left stopped.
-     */
-    async maintain(): Promise<void> {
-      if (pending || !(await docker().available())) return;
-      const seen = await status();
-      if (seen.state === "running" && seen.stale) await up();
-    },
-    /** The cards, for the page: what the probe found, and which is pinned, chosen and held. */
-    async hardware(): Promise<Probed & { pinned?: string; chosen: string; held?: string }> {
-      const found = await gpus.probe();
-      const held = await inspect().then(heldCard, () => undefined);
-      return { ...found, pinned: options.pinned, chosen: options.chosen(), held };
-    },
-    /** Whether the container is there, as last seen: what the tools are offered by. Quick: no question to Docker. */
-    installed: () => installed ?? options.wasInstalled(),
-  };
+  async function stop(): Promise<void> {
+    if (pending) throw new Error("Wait for the setup to finish.");
+    const detail = await own();
+    if (detail && detail !== "foreign") await docker().containers.stop(names.container);
+    error = "";
+  }
+
+  /**
+   * Removes the container, and with `removeData` the volume with the projects. The image stays: Docker for extensions
+   * cannot remove one, and the page says how. The tools leave every chat.
+   */
+  async function uninstall(removeData: boolean): Promise<void> {
+    if (pending) throw new Error("Wait for the setup to finish.");
+    pending = true;
+    error = "";
+    try {
+      const d = docker();
+      const detail = await own();
+      if (detail === "foreign") throw new Error(`A container named ${names.container} is there that is not this extension's. Rename or remove it first.`);
+      if (detail) await d.containers.remove(names.container);
+      relay.forget();
+      if (removeData) await d.volumes.remove(names.volume);
+    } finally {
+      pending = false;
+    }
+  }
+
+  /**
+   * The look every 30 seconds, and once as the half starts: a running container that is stale is made again (in
+   * `status`), and while the server answers, its tools are asked for again, which reloads the open chats only where
+   * they changed. A container somebody stopped is never started here.
+   */
+  async function maintain(): Promise<void> {
+    const now = await status();
+    if (now.state === "running") await relay.refresh();
+  }
+
+  /** The cards as the probe finds them now, and which the server is, or would be, on. */
+  async function hardware(): Promise<Probed & { chosen: string; pinned: boolean; wanted?: string }> {
+    const found = await detect();
+    const detail = (await docker().available()) ? await own() : undefined;
+    const held = detail && detail !== "foreign" ? detail : undefined;
+    return { ...found, chosen: names.gpu ? "" : (store.setting("gpu") ?? ""), pinned: Boolean(names.gpu), wanted: wantedCard(held)?.uuid };
+  }
+
+  /**
+   * The card chosen on the page, by UUID, or "" for the card with the most free memory. A card that is not on the host
+   * is refused, and so is any while the host's owner pinned one. A running server is made again on it now (the look in
+   * `status` finds it stale), a stopped one at its next Start.
+   */
+  async function chooseGpu(uuid: string): Promise<{ restarting: boolean }> {
+    if (names.gpu) throw new Error("The host fixes the card for this server.");
+    if (uuid) {
+      const found = probed ?? (await detect());
+      if (!found.cards.some((c: Card) => c.uuid === uuid)) throw new Error("That card is not on this host.");
+    }
+    store.putSettings({ gpu: uuid });
+    const now = await status();
+    return { restarting: now.busy };
+  }
+
+  return { status, install, start: install, stop, uninstall, maintain, hardware, chooseGpu, probed: () => probed };
 }
 
 export type Service = ReturnType<typeof service>;
-
-/** A container by the server's name that is not this extension's: it is left alone. */
-export class Foreign extends Error {
-  constructor(
-    name: string,
-    readonly owner: string,
-  ) {
-    super(`${name} is ${owner ? `${owner}'s container` : "a container no extension made"}: rename or remove it first.`);
-  }
-}

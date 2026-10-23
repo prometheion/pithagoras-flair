@@ -1,8 +1,9 @@
 /*
- * A copy of the types Docker for extensions (pithagoras-docker 1.2.0) gives the extensions that build on it, as they
- * are in Pithagoras v0.2.0 (extensions/docker/src/api.ts, Apache-2.0, https://github.com/thecodacus/pithagoras).
- * The portal's own extensions import that file by its path; an extension in another repository cannot, so the types
- * are copied here, as they are, and nothing else. Types only: nothing of this file is in a build.
+ * A copy of the types Docker for extensions (pithagoras-docker 1.2.0) gives an extension that builds on it, from
+ * extensions/docker/src/api.ts in Pithagoras v0.2.0 (github.com/thecodacus/pithagoras, Apache-2.0), unchanged below
+ * this note. Pithagoras' own extensions import that file by its path in the repository; an extension in a repository
+ * of its own cannot, as Docker for extensions ships with the portal and is not on npm. Types only: nothing of it is in
+ * the built server.js.
  */
 
 /**
