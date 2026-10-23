@@ -37,7 +37,7 @@
     "test:browser": "playwright test"
   },
   "devDependencies": {
-    "@pithagoras/extension-api": "^0.2.1",
+    "@pithagoras/extension-api": "^0.2.0",
     "@pixiv/three-vrm": "3.5.5",
     "@playwright/test": "1.63.0",
     "@types/express": "5.0.6",
