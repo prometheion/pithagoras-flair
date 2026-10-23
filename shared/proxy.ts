@@ -1,6 +1,6 @@
 import http from "node:http";
 import type { Duplex } from "node:stream";
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 
 /**
  * The server's own pages (its viewer, its API, the files it serves, and for Godot its stream), served through the
@@ -84,6 +84,18 @@ function sameHost(origin: string, host: string): boolean {
 
 /** Requests that only read: let through from anywhere the portal's sign-in lets them come. */
 const READS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * For the whole of an extension's routes (`portal.router.use(writesFromHere)`), before any of them: a request that is
+ * not a read is refused unless it comes from the portal's own pages (`fromHere`), by the rule core holds a stream to.
+ * The portal's cookie is SameSite=Lax, which a page on another port of the same address, or on another name under
+ * the same site, is still sent; and these routes install, start, stop and remove the server, open projects, take
+ * uploads and run code.
+ */
+export function writesFromHere(req: Request, res: Response, next: NextFunction): void {
+  if (READS.has(req.method) || fromHere(req.headers)) return next();
+  res.status(403).json({ error: "Only the portal's own pages may change this." });
+}
 
 /**
  * The route half, for every method under /ui (`portal.router.use("/ui", proxyUi(…))`). Express strips the mount

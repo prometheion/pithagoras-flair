@@ -107,7 +107,7 @@ test("it waits for Docker for extensions, as its package.json requires, and star
 });
 
 test("Install against the daemon: the GPU probe made, read and removed, then the container on the portal's network", async () => {
-  const answer = await fetch(`${at}/install`, { method: "POST" });
+  const answer = await fetch(`${at}/install`, { method: "POST", headers: { origin: new URL(at).origin } });
   assert.deepEqual(await answer.json(), { ok: true });
   const s = await until((s) => s.state === "running", "running");
   assert.equal(s.card, "GPU-bbbb1111", "the card with the most free memory");
@@ -163,7 +163,7 @@ test("after the portal's container is made again, a running server is made again
 
 test("Remove with the projects: the container and the volume go, and so do the tools", async () => {
   await until((s) => s.state === "running", "running");
-  const answer = await fetch(`${at}/uninstall`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ removeData: true }) });
+  const answer = await fetch(`${at}/uninstall`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(at).origin }, body: JSON.stringify({ removeData: true }) });
   assert.deepEqual(await answer.json(), { ok: true });
   assert.equal(container(), undefined);
   assert.ok(!docker.volumes.some((v: { Name: string }) => v.Name === "pithagoras-godot-data"));

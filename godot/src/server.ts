@@ -2,7 +2,7 @@ import path from "node:path";
 import type { ServerPortal } from "@pithagoras/extension-api/server";
 import type { Docker } from "../../shared/docker-api";
 import { mcpClient } from "../../shared/mcp";
-import { proxyUi, uiUpgrade } from "../../shared/proxy";
+import { proxyUi, uiUpgrade, writesFromHere } from "../../shared/proxy";
 import { relay } from "../../shared/relay";
 import { service } from "../../shared/service";
 import { openStore } from "../../shared/store";
@@ -41,6 +41,8 @@ export default function godot(portal: ServerPortal) {
     spec: (plan) => godotSpec(plan, { port: at.port, volume: at.volume, image: at.image, display: displayOf(store.setting("display")) }),
   });
 
+  // Before every route: what installs, starts, stops, removes or changes anything comes from the portal's own pages.
+  portal.router.use(writesFromHere);
   godotRoutes(portal, portal.router, svc, store, { port: at.port });
   const proxy = { port: () => at.port, token: () => store.token(), notAnswering: "Godot antwortet nicht. / Godot is not answering." };
   portal.router.use("/ui", proxyUi(proxy));

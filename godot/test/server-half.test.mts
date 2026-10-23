@@ -36,8 +36,9 @@ after(async () => {
 });
 
 const get = async (route: string) => (await fetch(`${at}${route}`)).json();
-const send = async (method: string, route: string, body?: unknown) => {
-  const answer = await fetch(`${at}${route}`, { method, headers: { "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+/** A change, as the Settings page sends it: from the portal's own origin (`origin`, else another page's). */
+const send = async (method: string, route: string, body?: unknown, origin = new URL(at).origin) => {
+  const answer = await fetch(`${at}${route}`, { method, headers: { "content-type": "application/json", origin }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: answer.status, body: await answer.json() };
 };
 const until = async (check: (state: any) => boolean, what: string) => {
@@ -58,6 +59,17 @@ test("before an install: nothing there, and no tools", async () => {
   assert.deepEqual(fake.listed(), []);
   assert.deepEqual(fake.registered(), []);
   assert.equal(fake.upgrades.length, 1, "the stream's upgrades are taken");
+});
+
+test("a change from another page is refused before it does anything, as a request with no word of where it is from", async () => {
+  for (const [route, origin] of [["/install", "http://127.0.0.1:1"], ["/uninstall", "https://evil.test"], ["/start", ""]] as const) {
+    const refused = await send("POST", route, route === "/uninstall" ? { removeData: true } : undefined, origin);
+    assert.equal(refused.status, 403, route);
+    assert.equal(refused.body.error, "Only the portal's own pages may change this.");
+  }
+  assert.equal((await send("PUT", "/display", { display: "1280x720" }, "http://localhost:9999")).status, 403);
+  assert.equal((await get("/state")).state, "absent", "nothing was installed");
+  assert.equal((await get("/state")).display, "1600x900", "nor the screen changed");
 });
 
 test("Install makes and starts the container, and once the server answers its tools are every chat's", async () => {
