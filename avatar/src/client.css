@@ -11,4 +11,4 @@
 /* A bust from 160 pixels up, the cut body faded out by the box's bottom edge, so it ends in no line on the stage and not under its status and buttons; the face below, in a soft circle. */
 .flair-avatar-gl[data-framing="bust"] canvas { -webkit-mask-image: linear-gradient(to bottom, #000 64%, transparent 86%); mask-image: linear-gradient(to bottom, #000 64%, transparent 86%); }
 .flair-avatar-gl[data-framing="face"] canvas,
-.flair-avatar-still { -webkit-mask-image: radial-gradient(circle, #000 60%, transparent 70%); mask-image: radial-gradient(circle, #000 60%, transparent 70%); }
+.flair-avatar-still { -webkit-mask-image: radial-gradient(circle closest-side, #000 60%, transparent 70%); mask-image: radial-gradient(circle closest-side, #000 60%, transparent 70%); }
