@@ -11,7 +11,7 @@ LABEL org.opencontainers.image.title="pithagoras-godot" \
       org.opencontainers.image.description="The Godot ${GODOT_VERSION} editor on the GPU, streamed with Selkies and driven over MCP, for the Pithagoras Godot extension" \
       org.opencontainers.image.source="https://github.com/thecodacus/pithagoras-flair" \
       org.opencontainers.image.version="${VERSION}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND MPL-2.0 AND GPL-2.0-or-later AND LGPL-2.0-or-later WITH WxWindows-exception-3.1"
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND MPL-2.0 AND GPL-2.0-or-later AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND LGPL-2.0-or-later WITH WxWindows-exception-3.1"
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
 
 # Xvfb with GLX (NVIDIA's Vulkan driver presents into it), the X/GL/font libraries the official Godot build loads,
@@ -37,6 +37,13 @@ RUN cd /tmp/pkgs && grep -E '\.deb$' SHA256SUMS.build | sha256sum -c - \
     && mv vgl/usr/share/doc/virtualgl-${VGL_VERSION}/LICENSE.txt /usr/share/doc/pithagoras-godot/virtualgl-LICENSE.txt \
     && mv vgl/usr/share/doc/virtualgl-${VGL_VERSION}/LICENSE-FLTK.txt /usr/share/doc/pithagoras-godot/virtualgl-LICENSE-FLTK.txt \
     && cd / && rm -rf /var/lib/apt/lists/* /tmp/pkgs
+
+# The browser gets Selkies' web client from the extension's package (src/stream, served by its server half), never
+# from here. It speaks the stream's protocol of the Selkies installed here, so the build stops unless the installed
+# client is the one the package has: selkies-web.sha256 lists its files, and a unit test holds the package to it.
+COPY selkies-web.sha256 /tmp/
+RUN cd /opt/selkies/lib/python3.12/site-packages/selkies/selkies_web && sha256sum -c /tmp/selkies-web.sha256 \
+    && rm /tmp/selkies-web.sha256
 
 # Godot itself, checked against the release's SHA512-SUMS.txt.
 COPY assets/godot-SHA512-SUMS.txt assets/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip /tmp/godot/
@@ -72,12 +79,22 @@ RUN mkdir -p /etc/vulkan/icd.d /usr/share/glvnd/egl_vendor.d \
 # audio quietly instead of logging driver errors (Movie Maker records audio through its own driver).
 RUN printf 'pcm.!default { type null }\n' > /etc/asound.conf
 
+# Everything in the container runs as godot (uid 10001), which owns /data and nothing the server serves or runs:
+# the server, the editor, the games and the agent's GDScript alike. The image's own files stay root's, so nothing
+# that runs here can change them. /tmp/.X11-unix is made as X expects it, root's and open to all with the sticky bit,
+# since Xvfb runs as godot too. A new volume at /data takes the folder's owner from the image.
+RUN useradd --uid 10001 --user-group --home-dir /data/home --no-create-home --shell /usr/sbin/nologin godot \
+    && mkdir -p /data /tmp/.X11-unix && chown godot:godot /data && chmod 1777 /tmp/.X11-unix
+
 ENV GODOT_VERSION=${GODOT_VERSION}
 COPY addon/ /opt/godot-server/addon/
-COPY server.py viewer.html /opt/godot-server/
+COPY server.py /opt/godot-server/
 
+USER 10001:10001
 WORKDIR /data
 # Nothing is published: the server listens on the loopback of the portal's network namespace.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s \
   CMD python3 -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('GODOT_SERVER_PORT', '3880'), timeout=4)"
-ENTRYPOINT ["python3", "/opt/godot-server/server.py"]
+# -I: Python's isolated mode, so the server never imports anything from the environment or from a site folder under
+# the home the editor writes to, which agent-written code could put there for the next start.
+ENTRYPOINT ["python3", "-I", "/opt/godot-server/server.py"]

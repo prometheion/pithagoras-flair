@@ -4,17 +4,18 @@
 This process is the container's supervisor and its only network listener: plain HTTP on 127.0.0.1 (the portal's
 loopback, as the container shares the portal's network namespace), and every route but /healthz asks for the one
 credential, `Authorization: Bearer <token>`. Nobody reaches it directly: the Godot extension's server half proxies
-the viewer and its stream at /api/x/pithagoras-godot/ui/ behind the portal's own sign-in, and adds the token on the
-way, and relays the MCP tools to the chats.
+what the viewer asks of it and its stream at /api/x/pithagoras-godot/ui/ behind the portal's own sign-in, and adds the
+token on the way, and relays the MCP tools to the chats.
 
-    /                    the viewer: the streamed editor, the project menu, Run and Stop, the activity log
-    /stream/...          the Selkies stream (HTTP and WebSocket), piped to Selkies on its Unix socket
+    /stream/...          the Selkies stream (its WebSocket and its API), piped to Selkies on its Unix socket
     /files/<path>        exports and recordings, for download
     /api/...             what the viewer page calls
     /mcp                 MCP over Streamable HTTP: POST JSON-RPC, JSON replies
     /healthz             liveness, the one route without the token
 
-The secure context Selkies' WebCodecs need is the portal's: the viewer is served on the portal's own origin.
+No page that runs is served from here. The viewer and Selkies' web client are the extension's own, from its package,
+on the portal's origin (whose secure context Selkies' WebCodecs need): this process runs the editor, and the editor
+runs the agent's code, so nothing it answers is ever run as a page of the portal's.
 
 It starts and restarts the X display (Xvfb), the stream (Selkies) and the editor, and runs the command-line jobs
 (script checks, exports, Movie Maker recordings) itself. Editor operations go to the godot_mcp_bridge editor plugin
@@ -62,10 +63,12 @@ DATA = os.environ.get("GODOT_DATA_DIR", "/data")
 GODOT = os.environ.get("GODOT_BIN", "/opt/godot/godot")
 VGLRUN = os.environ.get("VGLRUN", "/opt/VirtualGL/bin/vglrun")
 SELKIES = os.environ.get("SELKIES_BIN", "selkies")
+# The web client Selkies would otherwise copy into a temporary folder of this user's at every start, served from where
+# the image put it instead: root's, so nothing that runs in the container can change what it serves.
+SELKIES_WEB = os.environ.get("SELKIES_WEB_ROOT", "/opt/selkies/lib/python3.12/site-packages/selkies/selkies_web")
 DISPLAY_SIZE = os.environ.get("DISPLAY_SIZE", "1600x900")
 HERE = os.path.dirname(os.path.abspath(__file__))
 ADDON_SRC = os.path.join(HERE, "addon", "godot_mcp_bridge")
-VIEWER_FILE = os.path.join(HERE, "viewer.html")
 
 DISPLAY = ":1"
 # Selkies listens on a Unix socket in a folder only this process's user can open: in the portal's network namespace
@@ -172,6 +175,14 @@ def output_since(mark, wait=0.15):
 
 def no_core():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))   # crash dumps are 0.3-1.3 GB each on a failing SSD
+
+
+def not_dumpable():
+    """This process is kept from every other process of its user (PR_SET_DUMPABLE 0): none may attach to it, read its
+    memory or read its environment, where its token is. The editor, the games and the agent's GDScript run as the same
+    user. The processes it starts are not affected: exec makes each dumpable again."""
+    if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE, 0) failed")
 
 
 def kill_group(p, timeout=10):
@@ -340,8 +351,8 @@ def xvfb_argv():
 
 
 def selkies_argv():
-    return [SELKIES, f"--unix-socket={SELKIES_SOCKET}", "--subfolder=/stream/", "--enable-https=false",
-            "--enable-basic-auth=false", "--enable-resize=false", "--audio-enabled=false",
+    return [SELKIES, f"--unix-socket={SELKIES_SOCKET}", f"--web-root={SELKIES_WEB}", "--subfolder=/stream/",
+            "--enable-https=false", "--enable-basic-auth=false", "--enable-resize=false", "--audio-enabled=false",
             "--microphone-enabled=false", "--webcam-enabled=false", "--gamepad-enabled=false",
             "--file-transfers=none", "--printing-enabled=false", "--enable-sharing=false", "--second-screen=false",
             "--keyboard-shortcuts=false", "--ui-show-sidebar=false", "--ui-title=Godot editor"]
@@ -426,11 +437,17 @@ def on_editor_exit(code):
 
 
 def stream_connection(timeout=5):
-    """A connection to Selkies, on its Unix socket."""
+    """A connection to Selkies, on its Unix socket, checked to be Selkies': the process that listens on it is in the
+    session of the Selkies this server started (each supervised process is started as a session of its own). The
+    editor, the games and the GDScript the agent runs are the same user as Selkies, so they could put a socket of their
+    own at that path; they cannot join another process's session."""
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
         s.connect(SELKIES_SOCKET)
+        pid, _uid, _gid = struct.unpack("3i", s.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")))
+        if os.getsid(pid) != STREAM.pid():
+            raise ConnectionRefusedError(f"the stream's socket is held by process {pid}, which is not the Selkies this server started")
     except OSError:
         s.close()
         raise
@@ -1650,34 +1667,7 @@ MIME = {".html": "text/html; charset=utf-8", ".js": "text/javascript", ".wasm": 
         ".pck": "application/octet-stream", ".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml",
         ".ico": "image/x-icon", ".json": "application/json", ".mp4": "video/mp4", ".wav": "audio/wav",
         ".zip": "application/zip", ".txt": "text/plain; charset=utf-8"}
-# Loaded first in the stream page (the Selkies client, in the viewer's iframe):
-#  - The client pauses the display's video when its tab is hidden; this keeps it shown, so a background tab keeps
-#    its stream.
-#  - The viewer page scales the whole stream page to fit the window; the client draws the video with nearest-neighbour
-#    filtering, which drops strokes from text at any scale but 1:1, so it is switched back to smooth scaling.
-#  - When the server ends this client's stream (a "KILL <reason>" message, sent when another tab or device connects),
-#    the client stops for good and leaves its last frame up. This tells the viewer page, which then says so.
-STREAM_JS = b"""(() => {
-  const d = Document.prototype;
-  Object.defineProperty(d, 'hidden', {configurable: true, get: () => false});
-  Object.defineProperty(d, 'visibilityState', {configurable: true, get: () => 'visible'});
-  document.addEventListener('visibilitychange', e => e.stopImmediatePropagation(), true);
-  const style = document.createElement('style');
-  style.textContent = '#videoStream{image-rendering:auto!important}';
-  (document.head || document.documentElement).appendChild(style);
-  // The client publishes its transport (a wrapper around the stream socket) as window.selkiesTransport.
-  let transport;
-  Object.defineProperty(window, 'selkiesTransport', {configurable: true, get: () => transport, set: t => {
-    transport = t;
-    if (t && t.addEventListener) t.addEventListener('message', e => {
-      if (typeof e.data === 'string' && e.data.startsWith('KILL '))
-        parent.postMessage({gsStream: 'ended', reason: e.data.slice(5)}, location.origin);
-    });
-  }});
-})();
-"""
 HOP = {"connection", "keep-alive", "proxy-connection", "transfer-encoding", "te", "trailer", "upgrade"}
-NO_FRAMING = {"Content-Security-Policy": "frame-ancestors 'self'"}   # only this origin may frame the page
 # What the viewer API's POSTs must declare. The portal's proxy refuses a write from another origin before it gets
 # here; these types are what the page itself sends, so anything else is not the page.
 POST_TYPES = {"/api/projects/upload": ("application/zip", "application/octet-stream")}
@@ -1847,13 +1837,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self.mcp() if method == "POST" else self.empty(405, {"Allow": "POST"})
         if path == "/stream":
             return self.redirect("stream/", code=301)
-        if path == "/stream/__gs_shim.js":
-            return self.send_body(200, "text/javascript", STREAM_JS)
         if path.startswith("/stream/"):
             return self.proxy_stream()
-        if path in ("/", "/index.html"):
-            with open(VIEWER_FILE, "rb") as f:
-                return self.send_body(200, "text/html; charset=utf-8", f.read(), NO_FRAMING)
         if path.startswith("/files/"):
             return self.serve_files(path)
         if path.startswith("/api/"):
@@ -1978,12 +1963,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except OSError:
             return self.send_body(502, "text/plain", b"the stream is starting; reload in a few seconds")
         ws = self.headers.get("Upgrade", "").lower() == "websocket"
-        inject = self.command == "GET" and self.path.split("?")[0] in ("/stream/", "/stream/index.html")
-        head = [f"{self.command} {self.path} HTTP/{'1.0' if inject else '1.1'}"]
+        head = [f"{self.command} {self.path} HTTP/1.1"]
         for k, v in self.headers.items():
             kl = k.lower()
-            if inject and kl == "accept-encoding":
-                continue
             if kl == "authorization":
                 continue   # this server's token, not Selkies'
             if kl in HOP and not (ws and kl in ("connection", "upgrade")):
@@ -1996,8 +1978,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
             up.sendall(("\r\n".join(head) + "\r\n\r\n").encode("latin-1") + body)
             if ws:
                 self.pipe(up)
-            elif inject:
-                self.inject_page(up)
             else:
                 up.settimeout(60)
                 while True:
@@ -2010,24 +1990,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         finally:
             up.close()
             self.close_connection = True
-
-    def inject_page(self, up):
-        """The stream client's page, with STREAM_JS loaded before the client."""
-        up.settimeout(30)
-        data = b""
-        while True:
-            chunk = up.recv(1 << 16)
-            if not chunk:
-                break
-            data += chunk
-        head, _, body = data.partition(b"\r\n\r\n")
-        lines = head.decode("latin-1").split("\r\n")
-        if " 200 " in lines[0] + " ":
-            # Relative: the page is at <wherever the portal serves the viewer>/stream/.
-            body = body.replace(b"<head>", b'<head><script src="__gs_shim.js"></script>', 1)
-        keep = [l for l in lines[1:] if l.split(":", 1)[0].strip().lower() not in ("content-length", "connection", "transfer-encoding")]
-        out = "\r\n".join(["HTTP/1.1 " + lines[0].split(" ", 1)[1]] + keep + [f"Content-Length: {len(body)}", "Connection: close"])
-        self.connection.sendall(out.encode("latin-1") + b"\r\n\r\n" + body)
 
     def pipe(self, up):
         """Both directions of a WebSocket on one thread, without blocking: each side has a write queue, so a large
@@ -2112,6 +2074,7 @@ def main():
         print("GODOT_SERVER_TOKEN is not set; refusing to start a server that runs arbitrary code.", file=sys.stderr)
         sys.exit(1)
     no_core()
+    not_dumpable()
     for d in (PROJECTS, EXPORTS, RENDERS, HOME, TMP):
         os.makedirs(d, exist_ok=True)
     os.makedirs(RUNTIME_DIR, mode=0o700, exist_ok=True)

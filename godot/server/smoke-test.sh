@@ -22,7 +22,9 @@ TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(24))")
 trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 
 step "1/3 starting $IMAGE as $NAME (no GPU, network $NETWORK, port $PORT)"
-docker run -d --name "$NAME" --network "$NETWORK" --init -e GODOT_SERVER_TOKEN="$TOKEN" -e GODOT_SERVER_PORT="$PORT" "$IMAGE" >/dev/null
+# As the extension makes it: its own user, no capabilities, no way to gain one.
+docker run -d --name "$NAME" --network "$NETWORK" --init --user 10001:10001 --cap-drop ALL --security-opt no-new-privileges \
+  -e GODOT_SERVER_TOKEN="$TOKEN" -e GODOT_SERVER_PORT="$PORT" "$IMAGE" >/dev/null
 docker cp "$HERE/tools.json" "$NAME:/tmp/tools.json"
 
 step "2/3 MCP ping, initialize and tools/list against tools.json, and the routes without the token"

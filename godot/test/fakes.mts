@@ -164,6 +164,8 @@ export function fakePortal(docker?: Docker) {
 export async function fakeMcp(token: string | (() => string)) {
   const expected = () => (typeof token === "string" ? token : token());
   const seen: { method: string; params: any; auth?: string }[] = [];
+  /** The paths it was asked for besides /mcp and /api/state, in order. */
+  const served: string[] = [];
   const answers = new Map<string, any>();
   let instructions = "Tools for a real Godot 4 editor.";
   let tools = TOOLS;
@@ -178,7 +180,10 @@ export async function fakeMcp(token: string | (() => string)) {
       if (req.url === "/api/state") {
         return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ready: true, editor: "running", project: "starter", renderer: "forward_plus", busy: null, restarts: 0, adapter: "NVIDIA GeForce RTX 3060", godot: "4.7.2.stable", log: [{ line: "the activity log" }] }));
       }
-      if (req.url !== "/mcp") return void res.writeHead(200, { "content-type": "text/html" }).end(`<p>viewer at ${req.url}</p>`);
+      if (req.url !== "/mcp") {
+        served.push(req.url!);
+        return void res.writeHead(200, { "content-type": "text/html" }).end(`<p>viewer at ${req.url}</p>`);
+      }
       const msg = JSON.parse(body);
       seen.push({ method: msg.method, params: msg.params, auth: req.headers.authorization });
       const reply = (result: unknown) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result }));
@@ -208,6 +213,7 @@ export async function fakeMcp(token: string | (() => string)) {
   return {
     port: (server.address() as AddressInfo).port,
     seen,
+    served,
     upgrades,
     answers,
     setInstructions: (text: string) => void (instructions = text),

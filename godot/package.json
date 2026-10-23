@@ -17,10 +17,10 @@
   "pithagoras": {
     "client": "./web/client.js",
     "style": "./web/client.css",
-    "server": "./server.js",
+    "server": "./lib/server.js",
     "requires": { "pithagoras-docker": "^1.2.0" }
   },
-  "files": ["web", "server.js", "README.md", "NOTICE", "LICENSE"],
+  "files": ["web", "lib", "pages", "README.md", "NOTICE", "LICENSE"],
   "scripts": {
     "build": "node build.mjs && tsc --noEmit -p .",
     "test": "node --import tsx --test --test-timeout=60000 test/*.test.mts",

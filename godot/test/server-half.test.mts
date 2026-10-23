@@ -92,10 +92,25 @@ test("Install makes and starts the container, and once the server answers its to
   assert.ok(fake.counts.reloads >= 1);
 });
 
-test("the viewer is the server's, through the portal, with the token added", async () => {
-  const page = await fetch(`${at}/ui/?lang=de`);
-  assert.equal(page.status, 200);
-  assert.equal(await page.text(), "<p>viewer at /?lang=de</p>");
+test("the viewer and Selkies' web client are the extension's own; what they ask of the server goes on with its token", async () => {
+  const pages = path.resolve(import.meta.dirname, "../pages");
+  const viewer = await fetch(`${at}/ui/?lang=de`);
+  assert.equal(viewer.status, 200);
+  assert.equal(await viewer.text(), readFileSync(path.join(pages, "viewer.html"), "utf8"));
+  assert.equal(viewer.headers.get("content-security-policy"), "frame-ancestors 'self'");
+  assert.equal(viewer.headers.get("x-content-type-options"), "nosniff");
+  const stream = await (await fetch(`${at}/ui/stream/`)).text();
+  assert.match(stream, /^<!doctype html><html lang="en"><head><script src="__gs_shim.js"><\/script><meta charset="utf-8">/, "the shim first");
+  const client = await fetch(`${at}/ui/stream/assets/index-BpOBp7NB.js`);
+  assert.equal(await client.text(), readFileSync(path.join(pages, "stream/assets/index-BpOBp7NB.js"), "utf8"));
+  assert.match(client.headers.get("content-type")!, /javascript/);
+  assert.equal(await (await fetch(`${at}/ui/stream/__gs_shim.js`)).text(), readFileSync(path.join(pages, "stream/__gs_shim.js"), "utf8"));
+  const seen = server.served.length;
+  // What is not one of those files is the server's: the viewer's API, the stream's.
+  assert.equal(await (await fetch(`${at}/ui/api/projects`)).text(), "<p>viewer at /api/projects</p>");
+  assert.equal(await (await fetch(`${at}/ui/stream/api/status`)).text(), "<p>viewer at /stream/api/status</p>");
+  assert.equal((await fetch(`${at}/ui/stream/LICENSE`)).status, 200, "the licence is not a page: the server's to answer, here the stand-in's");
+  assert.deepEqual(server.served.slice(seen), ["/api/projects", "/stream/api/status", "/stream/LICENSE"], "nothing of the pages was asked of the server");
 });
 
 test("another screen size makes the running editor again with it; a size not offered, or a GPU not there, is refused", async () => {

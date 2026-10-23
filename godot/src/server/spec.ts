@@ -28,14 +28,22 @@ export const names = () => namesFrom(process.env, "godot", { container: "pithago
  * Docker's own request, with every driver capability: graphics for Vulkan and EGL, compute, and utility for
  * nvidia-smi. The stream is encoded on the CPU (x264): NVENC wants the first GPU's device node in a container that may
  * see only another card.
+ *
+ * What runs in it is the agent's as much as the server's: GDScript it sends, `@tool` scripts and games it writes. So it
+ * runs as the image's own user (godot, uid 10001), not root, with no Linux capabilities at all (`CapDrop: ALL`: Xvfb,
+ * Selkies and the editor need none) and no way to gain one (`no-new-privileges`, which a setuid program would
+ * otherwise get round). It is in the portal's network namespace all the same: the README says what that reaches.
  */
 export function godotSpec(plan: Plan, server: { port: number; volume: string; image: string; display: Display }): ContainerSpec {
   return {
     Image: server.image,
+    User: "10001:10001",
     Tty: true,
     Env: [`GODOT_SERVER_TOKEN=${plan.token}`, `GODOT_SERVER_PORT=${server.port}`, `DISPLAY_SIZE=${server.display}`, "NVIDIA_DRIVER_CAPABILITIES=all"],
     HostConfig: {
       NetworkMode: plan.network,
+      CapDrop: ["ALL"],
+      SecurityOpt: ["no-new-privileges"],
       Init: true,
       ShmSize: 1024 ** 3,
       Memory: 8 * 1024 ** 3,

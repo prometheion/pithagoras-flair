@@ -35,6 +35,19 @@ test("the container: on the portal's loopback, restarted unless stopped, with it
   assert.equal(host.PortBindings, undefined, "nothing is published");
 });
 
+test("what runs in it runs as the image's own user, with no capabilities and no way to gain one", () => {
+  const spec = godotSpec({ ...plan, card: { uuid: "GPU-bbbb1111" } }, server) as any;
+  assert.equal(spec.User, "10001:10001");
+  assert.deepEqual(spec.HostConfig.CapDrop, ["ALL"]);
+  assert.equal(spec.HostConfig.CapAdd, undefined);
+  assert.deepEqual(spec.HostConfig.SecurityOpt, ["no-new-privileges"]);
+  assert.equal(spec.HostConfig.Privileged, undefined);
+  // The image says the same, for a container made from it by hand.
+  const dockerfile = readFileSync(new URL("../server/Dockerfile", import.meta.url), "utf8");
+  assert.match(dockerfile, /^USER 10001:10001$/m);
+  assert.match(dockerfile, /^ENTRYPOINT \["python3", "-I", /m);
+});
+
 test("without a card it asks Docker for no GPU", () => {
   assert.deepEqual((godotSpec(plan, server) as any).HostConfig.DeviceRequests, []);
 });

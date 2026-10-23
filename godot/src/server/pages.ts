@@ -1,0 +1,39 @@
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import type { NextFunction, Request, Response } from "express";
+
+/**
+ * The pages that run on the portal's origin under /ui, every one of them the extension's own, from its package
+ * (pages/): the viewer at /ui/, and at /ui/stream/ Selkies' web client, as Selkies 2.1.0 has it (the image's build
+ * stops unless the image's Selkies has the same: server/selkies-web.sha256), with the shim its page loads first
+ * (`__gs_shim.js`). Mounted before the proxy (`portal.router.use("/ui", pages(…))`): what is not one of these files
+ * goes on to the server, whose answers are its API, its files and the stream's WebSocket.
+ *
+ * Why they are not the server's: the server runs the editor, and the editor runs the agent's code. A page it served
+ * would run on the portal's origin, where a script can call the portal's API as the person.
+ */
+
+/** As every page and file here is sent: framed by the portal's own pages alone, taken as the type it says it is. */
+const HEADERS = { "content-security-policy": "frame-ancestors 'self'", "x-content-type-options": "nosniff", "cache-control": "no-cache" };
+
+export function pages(dir: string) {
+  const stream = path.join(dir, "stream");
+  // Every file of the client, by its path under /ui/stream/: nothing else under it is served from here.
+  const files = new Set(
+    readdirSync(stream, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name !== "LICENSE")
+      .map((entry) => path.relative(stream, path.join(entry.parentPath, entry.name)).split(path.sep).join("/")),
+  );
+  // The client's page, with the shim loaded before anything of the client.
+  const index = readFileSync(path.join(stream, "index.html"), "utf8").replace("<head>", '<head><script src="__gs_shim.js"></script>');
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (req.method !== "GET" && req.method !== "HEAD") return next();
+    // /ui without its slash is the proxy's, which sends it to /ui/.
+    if (req.path === "/" && req.originalUrl.split("?")[0].endsWith("/")) return res.sendFile(path.join(dir, "viewer.html"), { headers: HEADERS });
+    if (req.path === "/stream/" || req.path === "/stream/index.html") return void res.set(HEADERS).type("html").send(index);
+    const file = req.path.startsWith("/stream/") ? req.path.slice("/stream/".length) : "";
+    if (files.has(file)) return res.sendFile(path.join(stream, file), { headers: HEADERS });
+    next();
+  };
+}

@@ -69,7 +69,7 @@ test("the label table names every tool the server lists, and nothing else", () =
 });
 
 test("the viewer's English and German tables say the same texts, and every text the viewer shows is in them", () => {
-  const html = fs.readFileSync(new URL("../server/viewer.html", import.meta.url), "utf8");
+  const html = fs.readFileSync(new URL("../pages/viewer.html", import.meta.url), "utf8");
   const script = html.split("<script>")[1].split("</script>")[0];
   const table = /de: \{([\s\S]*?)\n  \},/.exec(script)![1];
   const german = new Map([...table.matchAll(/^\s+"((?:[^"\\]|\\.)*)": "((?:[^"\\]|\\.)*)",$/gm)].map((m) => [JSON.parse(`"${m[1]}"`), JSON.parse(`"${m[2]}"`)]));
