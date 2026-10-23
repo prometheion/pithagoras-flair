@@ -143,9 +143,11 @@ test("a portrait is a PNG of at most 1 MiB, kept with the model and served", asy
   const notPng = await put(new TextEncoder().encode("GIF89a"));
   assert.equal(notPng.status, 400);
   assert.equal((await notPng.json()).code, "not-png");
-  const big = await put(Buffer.concat([PNG, Buffer.alloc(1024 * 1024)]));
+  // By what its request says, sent by hand: fetch, still sending the picture, at times meets the closed connection
+  // before it reads the answer.
+  const big = await raw({ method: "PUT", path: `/x/models/${model.id}/portrait`, headers: { "content-type": "image/png", "content-length": 1024 * 1024 + 1 } }, (req) => req.flushHeaders());
   assert.equal(big.status, 413);
-  assert.equal((await big.json()).code, "too-large");
+  assert.equal(big.body.code, "too-large");
 });
 
 test("a model is renamed, trimmed, to 1 to 80 characters", async () => {
