@@ -91,6 +91,15 @@ export function vrm0Json(): Json {
       meta: { title: "Tiny Zero", author: "Pithagoras Flair tests", licenseName: "CC0", allowedUserName: "Everyone", commercialUssageName: "Allow" },
       humanoid: { humanBones: BONES.map(([bone], node) => ({ bone, node })) },
       blendShapeMaster: { blendShapeGroups: [{ name: "A", presetName: "a", binds }, { name: "Blink", presetName: "blink", binds }] },
+      // Its eyes looking by their bones, over the ranges a VRM 1.0 model has when it gives none, on the straight curve
+      // (three-vrm warns of any other).
+      firstPerson: {
+        firstPersonBoneOffset: { x: 0, y: 0.06, z: 0 },
+        lookAtTypeName: "Bone",
+        ...Object.fromEntries(
+          ["lookAtHorizontalInner", "lookAtHorizontalOuter", "lookAtVerticalDown", "lookAtVerticalUp"].map((name) => [name, { curve: [0, 0, 0, 1, 1, 1, 1, 0], xRange: 90, yRange: 10 }]),
+        ),
+      },
     },
   };
   return json;

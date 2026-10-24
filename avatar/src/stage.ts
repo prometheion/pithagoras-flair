@@ -98,14 +98,26 @@ async function loadModel(model: Model, signal: AbortSignal): Promise<VRM> {
   return vrm;
 }
 
-/** A pose on the model: its expressions, the angles of the bones it has (optional ones it lacks are skipped). */
-function pose(vrm: VRM, { expressions, bones }: Pose) {
+/**
+ * A pose on the model: its expressions, the angles of the bones it has (optional ones it lacks are skipped).
+ *
+ * The angles are as on a VRM 1.0 model, which faces +z, the camera, in its own axes (motion.ts). A VRM 0.x model faces
+ * -z in its own, and three-vrm's normalized bones keep the model's own axes when `rotateVRM0` turns the whole model
+ * half a turn about y to face the camera: the same angles would turn its bones the other way about x and z, the arms
+ * raised in place of lowered, the lean in a lean back, the nod and the tilt reversed. Half a turn about y reverses the
+ * x and z of everything, the axes a bone turns about among them: a turn about x or z is, seen so, one by the opposite
+ * angle, and a turn about y the same, and a bone's angles are three such turns one after the other. So a VRM 0.x model
+ * is given each angle with its x and z reversed, and is posed on screen as a VRM 1.0 one is. The eyes need nothing of
+ * this: three-vrm's lookAt is told which way a VRM 0.x model's face is (`faceFront`), and turns the eyes in its axes.
+ */
+export function pose(vrm: VRM, { expressions, bones }: Pose) {
   for (const [name, value] of Object.entries(expressions)) vrm.expressionManager?.setValue(name, value);
-  for (const [name, [x, y, z]] of Object.entries(bones)) vrm.humanoid.getNormalizedBoneNode(name as Bone)?.rotation.set(x, y, z);
+  const turned = vrm.meta.metaVersion === "0" ? -1 : 1;
+  for (const [name, [x, y, z]] of Object.entries(bones)) vrm.humanoid.getNormalizedBoneNode(name as Bone)?.rotation.set(turned * x, y, turned * z);
 }
 
 /** The model at rest, arms down, eyes open and mouth shut, as both start: and the height of its head bone then. */
-function rest(vrm: VRM): number {
+export function rest(vrm: VRM): number {
   pose(vrm, createMotion(() => 0.5).step({ mode: "idle", output: 0, dt: 0, reduced: true }));
   vrm.update(0);
   vrm.scene.updateMatrixWorld(true);

@@ -6,8 +6,9 @@ import type { AvatarMode } from "@pithagoras/extension-api";
  * moves and where the eyes look. No three.js in here, so it is tested on its own.
  *
  * Every change is made over time, not per frame (`damp`), so the avatar moves the same at 15, 30 or 60 frames a
- * second. Angles are radians on three-vrm's normalized bones, which are the same for VRM 0.x and 1.0 models: x tips a
- * bone forward, towards the camera, y turns it to the model's left (the viewer's right), z rolls it.
+ * second. Angles are radians on three-vrm's normalized bones, as on a VRM 1.0 model (the stage reverses x and z for a
+ * VRM 0.x one, whose own axes face the other way): x tips a bone forward, towards the camera, y turns it to the model's
+ * left (the viewer's right), z rolls it.
  */
 
 /** The bones it moves. Only hips, spine, head and the limbs are bones every VRM model has: the stage skips one a model lacks. */
