@@ -104,6 +104,30 @@ const frames = async (page: Page, n: number) => {
   return seen;
 };
 const median = (list: number[]) => [...list].sort((a, b) => a - b)[Math.floor(list.length / 2)];
+/** The mean of each colour channel, 0 to 255, where the model covers the frame whole. */
+const tone = (page: Page) =>
+  page.evaluate(
+    () =>
+      new Promise<{ r: number; g: number; b: number }>((resolve) =>
+        requestAnimationFrame(() => {
+          const gl = document.querySelector<HTMLCanvasElement>(".flair-avatar-gl canvas")!;
+          const copy = document.createElement("canvas");
+          copy.width = gl.width;
+          copy.height = gl.height;
+          const ctx = copy.getContext("2d")!;
+          ctx.drawImage(gl, 0, 0);
+          const pixels = ctx.getImageData(0, 0, copy.width, copy.height).data;
+          const sum = [0, 0, 0];
+          let n = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i + 3] < 250) continue;
+            n++;
+            for (let c = 0; c < 3; c++) sum[c] += pixels[i + c];
+          }
+          resolve({ r: sum[0] / n, g: sum[1] / n, b: sum[2] / n });
+        }),
+      ),
+  );
 /** How much of what the model covers in the frame is coloured (its channels more than 40 apart), not white or grey. */
 const coloured = (page: Page) =>
   page.evaluate(
@@ -227,15 +251,61 @@ test("with less motion asked for, it draws at most 20 frames a second", async ({
   expect(drawnFrames).toBeLessThanOrEqual(40);
 });
 
-test("a still avatar makes no drawing context: the orb until the model has a portrait, then the portrait", async ({ page, request }) => {
+test("a still avatar makes no drawing context: the orb until the model has a portrait, then the portrait, and a new one when it is made again", async ({ page, request }) => {
   const [model] = await open(page, request);
   await mount(page, { entry: model.id, still: true });
   await orbShown(page);
   await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
   await refresh(page);
-  await expect(page.locator(".flair-avatar-still")).toBeVisible();
+  const still = page.locator(".flair-avatar-still");
+  await expect(still).toBeVisible();
   await expect(page.getByTestId("orb")).toHaveCount(0);
+  const first = await still.getAttribute("src");
+  await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
+  await refresh(page);
+  await expect(still).not.toHaveAttribute("src", first!);
   expect((await counted(page)).context).toBe(0);
+});
+
+test("what is set on a model reaches its avatar already drawn, in its next frames, without making it again", async ({ page, request }) => {
+  const [model] = await open(page, request);
+  await mount(page, { entry: model.id });
+  await drawn(page);
+  const set = async (settings: Record<string, unknown>) => {
+    expect((await request.put(`${API}/models/${model.id}/settings`, { data: { settings } })).status()).toBe(200);
+    // The list again, as the page reads it when it is shown; the Settings page reads it after each change.
+    await refresh(page);
+  };
+  const pixels = async () => median((await frames(page, 3)).map((c) => c.pixels));
+  const before = await pixels();
+  // The camera eases to it as to a new framing. 1.5 times as near is 2.25 times the area, less what the box cuts.
+  await set({ zoom: 1.5 });
+  await expect.poll(async () => (await pixels()) / before, { timeout: 2000 }).toBeGreaterThan(1.6);
+  const usual = await tone(page);
+  const light = (c: { r: number; g: number; b: number }) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  await set({ zoom: 1.5, brightness: 1.5 });
+  await expect.poll(async () => light(await tone(page)), { timeout: 2000 }).toBeGreaterThan(light(usual) + 5);
+  const bright = await tone(page);
+  await set({ zoom: 1.5, brightness: 1.5, warmth: 1 });
+  await expect.poll(async () => { const warm = await tone(page); return warm.r - warm.b; }, { timeout: 2000 }).toBeGreaterThan(bright.r - bright.b + 5);
+  // The same stage all along, and the same entry: only a rename registers it again.
+  expect((await counted(page)).context).toBe(1);
+});
+
+test("an entry is registered again for a rename, and not for new settings or a new portrait", async ({ page, request }) => {
+  const [model] = await open(page, request);
+  await page.evaluate(() => ((window as any).before = (window as any).harness.registered()));
+  const same = () => page.evaluate(() => (window as any).harness.registered().every((e: unknown, i: number) => e === (window as any).before[i]));
+  await request.put(`${API}/models/${model.id}/settings`, { data: { settings: { zoom: 1.2 } } });
+  await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
+  await refresh(page);
+  // The list read, and what it changed drawn.
+  await page.waitForTimeout(300);
+  expect(await same()).toBe(true);
+  await request.patch(`${API}/models/${model.id}`, { data: { name: "Renamed" } });
+  await refresh(page);
+  await expect.poll(() => page.evaluate(() => (window as any).harness.entries())).toEqual([{ id: model.id, title: "Renamed", description: "3D model" }]);
+  expect(await same()).toBe(false);
 });
 
 test("a model whose file cannot be fetched draws the orb", async ({ page, request }) => {

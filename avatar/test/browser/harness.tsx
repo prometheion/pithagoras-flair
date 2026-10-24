@@ -184,6 +184,8 @@ function Mounted({ first }: { first: Shown }) {
   asked,
   /** The entries of a slot, as the portal would list them. */
   entries: (slot = "voice.avatar") => (slots.get(slot) ?? []).map(({ component, ...rest }) => rest),
+  /** The entries themselves, as they were registered: for a test that one is the same object as before, in the page. */
+  registered: (slot = "voice.avatar") => slots.get(slot) ?? [],
   mount(shown: Shown) {
     root?.unmount();
     root = createRoot(document.getElementById("root")!);

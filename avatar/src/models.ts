@@ -1,4 +1,4 @@
-import { createElement, type ComponentType, type LazyExoticComponent } from "react";
+import { createElement, Fragment, useSyncExternalStore, type ComponentType, type LazyExoticComponent } from "react";
 import type { AvatarProps } from "@pithagoras/extension-api";
 import type { Avatar as LiveAvatar } from "./Avatar";
 import type { Model } from "./model";
@@ -10,34 +10,49 @@ import { Still } from "./Still";
  * lists the models beside the orb, so choosing a model for an agent is choosing that entry, and nothing about agents
  * is kept here. An entry's id is its model's: a renamed model is registered again under the same id, and the agents
  * that chose it keep it; a deleted one is taken out, and those agents show the orb.
+ *
+ * What an entry draws is read from the latest list by its id, not kept from the list it was registered with: a new
+ * portrait or new settings reach every avatar of the model already drawn, which draws again with them, and the live
+ * one takes them in its next frame with no new drawing context.
  */
 
-/** What is registered for each model, by its id: under what name and portrait, and what takes it out. */
-const offered = new Map<string, { signature: string; drop: () => void }>();
+/** What is registered for each model, by its id: under what name, and what takes it out. */
+const offered = new Map<string, { name: string; drop: () => void }>();
+/** The latest list, by id, and what draws from it. */
+const records = new Map<string, Model>();
+const listeners = new Set<() => void>();
 /** Each list asked for, so an answer that comes after a later one's is not used. */
 let asked = 0;
 let warned = false;
 let stopped = false;
 let Live: LazyExoticComponent<typeof LiveAvatar> | undefined;
 
-const signature = (model: Model) => `${model.name}|${model.portrait ?? ""}`;
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => void listeners.delete(listener);
+};
+/** A hook: the model of the latest list, the same object until a newer list is read; undefined once it is gone. */
+const useModel = (id: string) => useSyncExternalStore(subscribe, () => records.get(id));
 
 /**
  * The entry's component for a model: the picture of it for a `still` avatar, and else the model drawn live, from a
- * chunk of its own (three.js is fetched only when a live avatar is first drawn).
+ * chunk of its own (three.js is fetched only when a live avatar is first drawn); the orb for a model no longer listed,
+ * until its entry is taken out.
  */
-function avatarOf(model: Model): ComponentType<AvatarProps> {
+function avatarOf(id: string): ComponentType<AvatarProps> {
   Live ??= portal.ui.lazy(() => import("./Avatar"), "Avatar");
   const Drawn = Live;
   return function ModelAvatar(props: AvatarProps) {
+    const model = useModel(id);
+    if (!model) return createElement(Fragment, null, props.orb);
     return props.still ? createElement(Still, { model, orb: props.orb }) : createElement(Drawn, { ...props, model });
   };
 }
 
 /**
- * Asks the server half for its models, and registers and takes out entries to match: one whose name or portrait
- * changed is taken out and registered again, as the portal keeps an entry as it was registered. The first list is
- * registered as the server sorts it, by name; models added later come after. Settings calls this after each change.
+ * Asks the server half for its models, and registers and takes out entries to match: one renamed is taken out and
+ * registered again, as the portal keeps an entry as it was registered. The first list is registered as the server
+ * sorts it, by name; models added later come after. Settings calls this after each change.
  */
 export async function refreshModels(): Promise<void> {
   const mine = ++asked;
@@ -51,16 +66,19 @@ export async function refreshModels(): Promise<void> {
     return;
   }
   if (mine !== asked || stopped) return;
+  // The records first, so an entry registered below draws its model at once.
+  records.clear();
+  for (const model of models) records.set(model.id, model);
+  listeners.forEach((listener) => listener());
   for (const [id, entry] of offered) {
-    const model = models.find((m) => m.id === id);
-    if (model && signature(model) === entry.signature) continue;
+    if (records.get(id)?.name === entry.name) continue;
     entry.drop();
     offered.delete(id);
   }
   for (const model of models) {
     if (offered.has(model.id)) continue;
-    const drop = portal.slots.register("voice.avatar", { id: model.id, title: model.name, description: msg("3D model"), component: avatarOf(model) });
-    offered.set(model.id, { signature: signature(model), drop });
+    const drop = portal.slots.register("voice.avatar", { id: model.id, title: model.name, description: msg("3D model"), component: avatarOf(model.id) });
+    offered.set(model.id, { name: model.name, drop });
   }
 }
 
