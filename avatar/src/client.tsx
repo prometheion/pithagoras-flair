@@ -23,7 +23,14 @@ export default function flairAvatar(given: Portal) {
       id: "settings",
       title: msg("3D Avatar"),
       icon: AvatarIcon,
-      search: [{ title: msg("Models"), section: msg("Models"), words: "vrm avatar 3d model upload modell hochladen" }],
+      search: [
+        { title: msg("Models"), section: msg("Models"), words: "vrm avatar 3d model upload modell hochladen" },
+        {
+          title: msg("Look and motion"),
+          section: msg("Look and motion"),
+          words: "zoom height brightness warmth light blink breathing sway lean thinking mouth lip sync arms pose gaze eyes download licence helligkeit wärme licht blinzeln atmen vorbeugen denkpose mund arme blick herunterladen lizenz",
+        },
+      ],
       // Settings draws an extension's page without a Suspense of its own: one fetched later would blank it until then.
       component: () => (
         <Suspense fallback={<p className="text-sm text-fg-subtle">{t("Loading…")}</p>}>

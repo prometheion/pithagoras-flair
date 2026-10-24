@@ -1,16 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import type { ApiError, AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
-import { Avatar } from "./Avatar";
+import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
+import type { ApiError } from "@pithagoras/extension-api";
 import type { Model } from "./model";
-import { withDefaults } from "./model-settings";
+import { withDefaults, type ModelSettings } from "./model-settings";
 import { refreshModels } from "./models";
 import { msg, portal, t } from "./portal";
-import { makePortrait, portraitStamp, type Shown } from "./stage";
-
-/** The preview's states, in the words of the portal's own Avatar dialog. */
-const STATES: [AvatarMode, string][] = [
-  ["idle", msg("Idle")], ["input", msg("Listening")], ["output", msg("Speaking")], ["thinking", msg("Thinking")], ["muted", msg("Muted")],
-];
+import { makePortrait, portraitStamp } from "./stage";
+import { Studio } from "./Studio";
 
 const api = {
   list: () => portal.api.json<{ models: Model[] }>(portal.api.url("/models")).then((answer) => answer.models),
@@ -20,6 +15,8 @@ const api = {
   portrait: (id: string, png: Blob, stamp: string) =>
     portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/portrait?stamp=${encodeURIComponent(stamp)}`), { method: "PUT", headers: { "Content-Type": "image/png" }, body: png }),
   rename: (id: string, name: string) => portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}`), { method: "PATCH", body: JSON.stringify({ name }) }),
+  settings: (id: string, settings: Partial<ModelSettings>) =>
+    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/settings`), { method: "PUT", body: JSON.stringify({ settings }) }),
   remove: (id: string) => portal.api.json(portal.api.url(`/models/${id}`), { method: "DELETE" }),
 };
 
@@ -36,9 +33,32 @@ function refusal(e: unknown): string {
 }
 
 /**
- * The 3D Avatar's page in Settings: the models, added from a VRM file, each with what it says of its own licence, and
- * a live preview of the one chosen, in the five states voice mode shows. An agent is given a model in its own Avatar
- * dialog, which lists them beside the orb.
+ * Free models to start with, each with what its file says of its licence, checked against what this extension takes
+ * and drawn as it is, with no setting changed: each a name, where it is, and a note to be translated.
+ */
+const FREE: [string, string, string][] = [
+  ["AvatarSample_B", "https://raw.githubusercontent.com/pixiv/ChatVRM/main/public/AvatarSample_B.vrm", msg("By VRoid Project. VRM 1.0, 20 MB. VRM Public License 1.0: commercial use allowed, no credit needed, may be passed on. VRoid's own terms for its sample models apply as well.")],
+  [
+    "VRM1_Constraint_Twist_Sample",
+    "https://raw.githubusercontent.com/pixiv/three-vrm/5a3242b66124386c32b085c6693d9059040e72e5/packages/three-vrm/examples/models/VRM1_Constraint_Twist_Sample.vrm",
+    msg("By pixiv. VRM 1.0, 10 MB. VRM Public License 1.0: commercial use allowed, no credit needed, may be passed on."),
+  ],
+  ["Vita", "https://raw.githubusercontent.com/madjin/vrm-samples/master/vroid/beta/Vita.vrm", msg("A sample from VRoid Studio's beta. VRM 0.x, 14 MB. CC0: free to use for anything, no credit needed.")],
+  ["VRoid Studio", "https://vroid.com/en/studio", msg("Make your own: a free app for Windows and macOS that saves VRM files.")],
+];
+
+/** The plus of the Add a model card. */
+const PLUS = (
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+    <path d="M12 5v14M5 12h14" />
+  </svg>
+);
+
+/**
+ * The 3D Avatar's page in Settings: the models as a gallery of cards, added from VRM files picked or dropped on it, and
+ * the one chosen in a card of its own under them (Studio.tsx), with what its licence says, a live preview in the five
+ * states voice mode shows, and what can be set on it. An agent is given a model in its own Avatar dialog, which lists
+ * them beside the orb. With no models yet, the page says where free ones are.
  *
  * The picture of a model that an agent's card shows is made here, in this browser, for each model whose picture is not
  * what it would draw now (`portraitStamp`: one made before its settings changed, or before a change to how models are
@@ -52,17 +72,29 @@ export function Settings() {
   const [models, setModels] = useState<Model[]>();
   const [loadFailed, setLoadFailed] = useState<string>();
   const [failure, setFailure] = useState<string>();
-  const [uploading, setUploading] = useState(false);
+  // The file being uploaded, by its name.
+  const [uploading, setUploading] = useState<string>();
   const [chosen, setChosen] = useState<string>();
+  const [dragging, setDragging] = useState(false);
+  // What a screen reader is told once a model is added.
+  const [said, setSaid] = useState("");
+  // The model whose portrait is being made, and those that could not be drawn, each with the stamp it was tried with.
+  const [making, setMaking] = useState<string>();
+  const [undrawable, setUndrawable] = useState<ReadonlySet<string>>(new Set());
   const file = useRef<HTMLInputElement>(null);
+  const add = useRef<HTMLButtonElement>(null);
+  const gallery = useRef<HTMLDivElement>(null);
+  // Drags over the gallery's children each enter and leave it: it is left when as many have left as entered.
+  const depth = useRef(0);
+  // Where the focus goes once the list is drawn again: a model's card, or the Add button.
+  const focusNext = useRef<string>();
   // The latest list read, which the portraits are made from, and each list asked for: an answer that comes after a
   // later one's is not used, or a portrait due for the later one would not be seen.
   const latest = useRef<Model[]>([]);
   const asked = useRef(0);
   // Whether portraits are being made now: one run at a time, which reads the latest list after each.
   const painting = useRef(false);
-  // The models that could not be drawn, each with the stamp it was tried with: tried once while the page is open.
-  const undrawable = useRef(new Set<string>());
+  const failed = useRef(new Set<string>());
 
   // The list again, and the entries offered as avatars with it.
   const reload = useCallback(async () => {
@@ -81,20 +113,23 @@ export function Settings() {
       for (;;) {
         const due = latest.current
           .map((model) => ({ model, stamp: portraitStamp(withDefaults(model.settings)) }))
-          .find(({ model, stamp }) => model.portraitStamp !== stamp && !undrawable.current.has(`${model.id}|${stamp}`));
+          .find(({ model, stamp }) => model.portraitStamp !== stamp && !failed.current.has(`${model.id}|${stamp}`));
         if (!due) return;
+        setMaking(due.model.id);
         try {
           await api.portrait(due.model.id, await makePortrait(due.model), due.stamp);
         } catch (e) {
-          // Not tried again with these settings while the page is open: its preview says why it cannot be drawn.
+          // Not tried again with these settings while the page is open: its card says so, and its preview says why.
           console.warn(`3D Avatar: no portrait of ${due.model.name}`, e);
-          undrawable.current.add(`${due.model.id}|${due.stamp}`);
+          failed.current.add(`${due.model.id}|${due.stamp}`);
+          setUndrawable(new Set(failed.current));
           continue;
         }
         await reload();
       }
     } finally {
       painting.current = false;
+      setMaking(undefined);
     }
   }, [reload]);
   const load = useCallback(() => {
@@ -109,6 +144,14 @@ export function Settings() {
     );
   }, [paint]);
   useEffect(load, [load]);
+  useEffect(() => {
+    const want = focusNext.current;
+    if (!want) return;
+    const to = want === "add" ? add.current : gallery.current?.querySelector<HTMLElement>(`[data-model="${want}"]`);
+    if (!to) return;
+    focusNext.current = undefined;
+    to.focus();
+  }, [models]);
 
   if (loadFailed) return <ui.LoadFailed error={loadFailed} onRetry={load} />;
   if (!models) return <ui.RowsSkeleton rows={2} label={t("Loading…")} />;
@@ -124,26 +167,70 @@ export function Settings() {
       return false;
     }
   };
-  const add = (picked: File) =>
-    run(async () => {
-      setUploading(true);
+  // One after another; a file refused is said with its name when there were several, and the next is still added.
+  const upload = async (files: File[]) => {
+    setFailure(undefined);
+    const refused: string[] = [];
+    for (const picked of files) {
+      setUploading(picked.name);
       try {
         const { model } = await api.upload(picked);
-        setChosen(model.id);
         await reload();
+        setChosen(model.id);
+        setSaid(t("Added {name}.", { name: model.name }));
         void paint();
-      } finally {
-        setUploading(false);
-        if (file.current) file.current.value = "";
+      } catch (e) {
+        refused.push(files.length === 1 ? refusal(e) : t("{file}: {reason}", { file: picked.name, reason: refusal(e) }));
       }
-    });
+    }
+    setUploading(undefined);
+    if (file.current) file.current.value = "";
+    if (refused.length) setFailure(refused.join("\n"));
+  };
   const remove = (model: Model) =>
     run(async () => {
-      const asked = t("Delete {name}? Agents that use it show the orb again.", { name: model.name });
-      if (ui.asksBeforeDeleting() && !(await ui.confirm({ title: asked, confirmLabel: t("Delete"), danger: true, deletes: true }))) return;
+      const asking = t("Delete {name}? Agents that use it show the orb again.", { name: model.name });
+      if (ui.asksBeforeDeleting() && !(await ui.confirm({ title: asking, confirmLabel: t("Delete"), danger: true, deletes: true }))) return;
       await api.remove(model.id);
+      // The next by name, or the one before for the last; with none left, the way to add one.
+      const at = models.findIndex((m) => m.id === model.id);
+      const rest = models.filter((m) => m.id !== model.id);
+      const next = rest[Math.min(at, rest.length - 1)];
+      setChosen(next?.id);
+      focusNext.current = next?.id ?? "add";
       await reload();
     });
+  const choose = () => {
+    // Kept focused while it uploads: a button that is disabled loses the focus.
+    if (!uploading) file.current?.click();
+  };
+
+  const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes("Files");
+  const drops = {
+    onDragEnter: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth.current++;
+      setDragging(true);
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth.current--;
+      if (depth.current === 0) setDragging(false);
+    },
+    onDragOver: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    },
+    onDrop: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth.current = 0;
+      setDragging(false);
+      if (!uploading) void upload([...e.dataTransfer.files]);
+    },
+  };
+  const addLabel = uploading ? t("Uploading {name}…", { name: uploading }) : dragging ? t("Drop to add") : t("Add a model");
   const previewed = models.find((m) => m.id === chosen) ?? models[0];
 
   return (
@@ -152,223 +239,129 @@ export function Settings() {
       <ui.Section
         title={t("Models")}
         hint={t("VRM files (.vrm). Choose one for an agent in its Avatar dialog: on the Agents page, open the agent and use the palette on its avatar.")}
-        action={
-          <>
-            <button type="button" className={ui.classes.primarySmall} disabled={uploading} onClick={() => file.current?.click()}>
-              {uploading ? t("Uploading…") : t("Add a model")}
-            </button>
-            <input
-              ref={file}
-              type="file"
-              accept=".vrm"
-              hidden
-              data-testid="flair-avatar-file"
-              onChange={(e) => {
-                const picked = e.target.files?.[0];
-                if (picked) void add(picked);
-              }}
-            />
-          </>
-        }
       >
-        {models.length === 0 ? (
-          <ui.Empty>{t("No models yet.")}</ui.Empty>
-        ) : (
-          <ul className="divide-y divide-line">
-            {models.map((model) => (
-              <ModelRow
-                key={model.id}
-                model={model}
-                previewed={model.id === previewed?.id}
-                onPreview={() => setChosen(model.id)}
-                onRename={(name) =>
-                  run(async () => {
-                    await api.rename(model.id, name);
-                    await reload();
-                  })
-                }
-                onDelete={() => void remove(model)}
-              />
-            ))}
-          </ul>
-        )}
+        <div ref={gallery} {...drops}>
+          {models.length === 0 ? (
+            <>
+              <div
+                data-testid="flair-avatar-empty"
+                className={`rounded-xl border border-dashed px-3 py-8 text-center text-sm transition motion-reduce:transition-none ${dragging ? "border-accent/60 bg-accent/5 text-accent" : "border-line text-fg-subtle"}`}
+              >
+                <p>{t("No models yet.")}</p>
+                <p className="mt-1 text-xs">{t("Add a VRM file to give an agent a 3D character in voice mode.")}</p>
+                <button ref={add} type="button" className={`mt-3 ${ui.classes.primarySmall}`} aria-disabled={uploading ? true : undefined} onClick={choose}>
+                  {addLabel}
+                </button>
+                <p className="mt-1.5 text-[11px] text-fg-faint">{t("Choose a .vrm file, or drop one here")}</p>
+              </div>
+              <div className="mt-4">
+                <p className="text-xs font-medium text-fg-muted">{t("Free models to start with")}</p>
+                <ul className="mt-1.5 space-y-1.5 text-xs">
+                  {FREE.map(([name, href, note]) => (
+                    <li key={name}>
+                      <a href={href} target="_blank" rel="noreferrer noopener" className="text-accent hover:underline">
+                        {name}
+                      </a>{" "}
+                      <span className="text-fg-muted">{t(note)}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-[11px] text-fg-faint">
+                  {t("Download one, then drop it above. Each model's terms are its author's: check them before you use one in something you make money with.")}
+                </p>
+              </div>
+            </>
+          ) : (
+            <ul className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-3">
+              {models.map((model) => (
+                <li key={model.id}>
+                  <Card
+                    model={model}
+                    chosen={model.id === previewed?.id}
+                    making={making === model.id}
+                    undrawable={undrawable.has(`${model.id}|${portraitStamp(withDefaults(model.settings))}`)}
+                    onChoose={() => setChosen(model.id)}
+                  />
+                </li>
+              ))}
+              <li>
+                <button
+                  ref={add}
+                  type="button"
+                  aria-disabled={uploading ? true : undefined}
+                  onClick={choose}
+                  className={`flex h-full min-h-[10rem] w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-2 text-center transition motion-reduce:transition-none ${
+                    dragging ? "border-accent/60 bg-accent/5 text-accent" : "border-line text-fg-subtle hover:bg-fg/5 hover:text-fg"
+                  } ${uploading ? "cursor-progress" : ""}`}
+                >
+                  {PLUS}
+                  <span className="text-xs font-medium [overflow-wrap:anywhere]">{addLabel}</span>
+                  <span className="text-[11px] text-fg-faint">{t("Choose a .vrm file, or drop one here")}</span>
+                </button>
+              </li>
+            </ul>
+          )}
+        </div>
+        <input
+          ref={file}
+          type="file"
+          accept=".vrm"
+          multiple
+          hidden
+          data-testid="flair-avatar-file"
+          onChange={(e) => {
+            const picked = [...(e.target.files ?? [])];
+            if (picked.length) void upload(picked);
+          }}
+        />
+        <p role="status" className="sr-only">{said}</p>
       </ui.Section>
       {previewed && (
-        <ui.Section title={t("Preview")}>
-          <Preview key={previewed.id} model={previewed} />
-        </ui.Section>
+        <Studio
+          key={previewed.id}
+          model={previewed}
+          onRename={(name) =>
+            run(async () => {
+              await api.rename(previewed.id, name);
+              await reload();
+            })
+          }
+          onDelete={() => void remove(previewed)}
+          onSave={(settings) =>
+            run(async () => {
+              await api.settings(previewed.id, settings);
+              await reload();
+              void paint();
+            })
+          }
+        />
       )}
     </div>
   );
 }
 
-/** A model in the list: its portrait, name, version and size, what its licence says, and what can be done with it. */
-function ModelRow({ model, previewed, onPreview, onRename, onDelete }: {
-  model: Model;
-  previewed: boolean;
-  onPreview: () => void;
-  onRename: (name: string) => Promise<boolean>;
-  onDelete: () => void;
-}) {
-  const { ui } = portal;
-  const [name, setName] = useState<string>();
+/** A model in the gallery, which chooses it: its portrait, name, VRM version and size. */
+function Card({ model, chosen, making, undrawable, onChoose }: { model: Model; chosen: boolean; making: boolean; undrawable: boolean; onChoose: () => void }) {
   const size = portal.format.number(model.size / (1024 * 1024), { maximumFractionDigits: 1 });
-  // A name refused stays in the field, to be put right.
-  const save = async () => {
-    if (await onRename(name!)) setName(undefined);
-  };
   return (
-    <li className="flex gap-3 py-3" data-model={model.id}>
-      <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-[#0b1220]">
-        {model.portrait && <img src={portal.api.url(`/models/${model.id}/portrait?v=${encodeURIComponent(model.portrait)}`)} alt="" className="h-full w-full object-cover" />}
-      </div>
-      <div className="min-w-0 flex-1 space-y-2">
-        <div>
-          {name === undefined ? (
-            <p className="truncate text-sm font-medium text-fg">{model.name}</p>
-          ) : (
-            <input
-              autoFocus
-              value={name}
-              aria-label={t("Rename")}
-              className={ui.classes.inputSmall}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void save();
-                if (e.key === "Escape") {
-                  // The field's, not the dialog's around it.
-                  e.stopPropagation();
-                  setName(undefined);
-                }
-              }}
-            />
-          )}
-          <p className="text-xs text-fg-subtle">{t("VRM {spec} · {size} MB", { spec: model.spec, size })}</p>
-        </div>
-        <Licence model={model} />
-        <div className="flex flex-wrap gap-1.5">
-          <button type="button" className={ui.classes.ghost} aria-pressed={previewed} onClick={onPreview}>
-            {t("Preview")}
-          </button>
-          <button type="button" className={ui.classes.ghost} onClick={() => setName(model.name)}>
-            {t("Rename")}
-          </button>
-          <button type="button" className={ui.classes.ghost} onClick={onDelete}>
-            {t("Delete")}
-          </button>
-        </div>
-      </div>
-    </li>
-  );
-}
-
-const link = (href: string) => (
-  <a href={href} target="_blank" rel="noreferrer noopener" className="break-all text-accent hover:underline">
-    {href}
-  </a>
-);
-
-/**
- * What a model says of its licence, as its VRM version says it: who made it, under what licence, who may use it as an
- * avatar, whether for money, whether it must be credited and passed on, and anything else it points to. A VRM 0.x
- * model names a licence rather than linking one, says nothing of credit, and allows passing it on by its licence: any
- * named one but Redistribution_Prohibited and Other, which says nothing of it.
- */
-function Licence({ model }: { model: Model }) {
-  const allowed = (yes: boolean | undefined) => (yes === undefined ? undefined : yes ? t("Allowed") : t("Not allowed"));
-  const who = { onlyAuthor: msg("Only the author"), onlySeparatelyLicensedPerson: msg("People the author has licensed"), everyone: msg("Everyone") };
-  let rows: [string, ReactNode][];
-  if (model.spec === "1.0") {
-    const l = model.licence;
-    const commercial = { personalNonProfit: msg("Personal, non-profit"), personalProfit: msg("Personal, for profit"), corporation: msg("Companies too") };
-    rows = [
-      [msg("Authors"), l.authors?.join(", ")],
-      [msg("Licence"), l.licenseUrl && link(l.licenseUrl)],
-      [msg("Use as an avatar"), l.avatarPermission && t(who[l.avatarPermission])],
-      [msg("Commercial use"), l.commercialUsage && t(commercial[l.commercialUsage])],
-      [msg("Credit"), l.creditNotation && (l.creditNotation === "required" ? t("Required") : t("Not required"))],
-      [msg("Redistribution"), allowed(l.allowRedistribution)],
-    ];
-    if (l.otherLicenseUrl) rows.push([msg("Other conditions"), link(l.otherLicenseUrl)]);
-  } else {
-    const l = model.licence;
-    const users = { OnlyAuthor: who.onlyAuthor, ExplicitlyLicensedPerson: who.onlySeparatelyLicensedPerson, Everyone: who.everyone };
-    rows = [
-      [msg("Authors"), l.author],
-      [msg("Licence"), l.licenseName],
-      [msg("Use as an avatar"), l.allowedUserName && t(users[l.allowedUserName])],
-      [msg("Commercial use"), allowed(l.commercialUssageName && l.commercialUssageName === "Allow")],
-      [msg("Credit"), undefined],
-      [msg("Redistribution"), allowed(l.licenseName === undefined || l.licenseName === "Other" ? undefined : l.licenseName !== "Redistribution_Prohibited")],
-    ];
-    for (const other of [l.otherLicenseUrl, l.otherPermissionUrl]) if (other) rows.push([msg("Other conditions"), link(other)]);
-  }
-  return (
-    <div className="text-xs">
-      <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
-        {rows.map(([label, value], i) => (
-          <div key={i} className="contents">
-            <dt className="text-fg-subtle">{t(label)}</dt>
-            <dd className={value ? "min-w-0 text-fg-muted" : "text-fg-faint"}>{value || t("Not stated")}</dd>
-          </div>
-        ))}
-      </dl>
-      <p className="mt-1 text-fg-faint">{t("What the model says of its own licence. It is the author's, not this extension's.")}</p>
-    </div>
-  );
-}
-
-/**
- * The model drawn live, in a dark square as the Avatar dialog's preview is, in a state chosen with the buttons under
- * it and with the dialog's made-up voice: syllables rising and falling inside slower phrases. What is drawn while the
- * model is not says why: still loading, a model that cannot be drawn, or a browser without WebGL 2.
- */
-function Preview({ model }: { model: Model }) {
-  const [state, setState] = useState<AvatarMode>("output");
-  const [shown, setShown] = useState<Shown>("loading");
-  const levels = useRef<AvatarLevels>({ input: 0, output: 0 });
-  useEffect(() => {
-    let frame = 0;
-    const tick = (ms: number) => {
-      const syllable = Math.max(0, Math.sin(ms * 0.012));
-      const phrase = 0.55 + 0.45 * Math.sin(ms * 0.0019);
-      const value = Math.min(1, syllable * phrase * 0.85 + Math.random() * 0.08);
-      levels.current = { input: state === "input" ? value : 0, output: state === "output" ? value : 0 };
-      frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [state]);
-  const why =
-    shown === "failed" ? t("This model could not be drawn. Voice mode shows the orb for it.")
-    : shown === "unsupported" ? t("WebGL 2 is not available in this browser, so voice mode shows the orb.")
-    : t("Loading the model…");
-  return (
-    <div className="w-[220px] max-w-full">
-      <div className="flex aspect-square items-center justify-center overflow-hidden rounded-xl bg-[#0b1220]">
-        <div className="relative aspect-square w-[58%]" data-testid="flair-avatar-preview">
-          <Avatar
-            model={model}
-            mode={state}
-            levels={levels}
-            onShown={setShown}
-            orb={<p className="absolute inset-0 grid place-items-center text-center text-xs text-[#acc9ee]">{why}</p>}
-          />
-        </div>
-      </div>
-      <div className="mt-2 grid grid-cols-3 gap-1" role="group" aria-label={t("Preview state")}>
-        {STATES.map(([value, label]) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={state === value}
-            onClick={() => setState(value)}
-            className={`truncate rounded-lg border px-1 py-1 text-[11px] transition ${state === value ? "border-accent/50 bg-accent/10 text-accent" : "border-line text-fg-muted hover:text-fg"}`}
-          >
-            {t(label)}
-          </button>
-        ))}
-      </div>
-    </div>
+    <button
+      type="button"
+      aria-pressed={chosen}
+      data-model={model.id}
+      onClick={onChoose}
+      className={`block w-full rounded-xl border p-2 text-left transition motion-reduce:transition-none ${chosen ? "border-accent/50 bg-accent/10" : "border-line hover:bg-fg/5"}`}
+    >
+      <span className={`grid aspect-square w-full place-items-center overflow-hidden rounded-lg bg-[#0b1220] ${making ? "animate-pulse motion-reduce:animate-none" : ""}`}>
+        {undrawable ? (
+          <span className="px-2 text-center text-[11px] text-fg-faint">{t("Cannot be drawn")}</span>
+        ) : (
+          model.portrait && <img src={portal.api.url(`/models/${model.id}/portrait?v=${encodeURIComponent(model.portrait)}`)} alt="" className="h-full w-full object-cover" />
+        )}
+      </span>
+      <span className="mt-1.5 block truncate text-xs font-medium text-fg" title={model.name}>
+        {model.name}
+      </span>
+      <span className="block truncate text-[11px] text-fg-subtle">{t("VRM {spec} · {size} MB", { spec: model.spec, size })}</span>
+    </button>
   );
 }

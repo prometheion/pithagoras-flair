@@ -54,6 +54,21 @@ class Boundary extends React.Component<{ fallback: React.ReactNode; children: Re
 }
 
 const button = "rounded-lg border px-2 py-1 text-xs";
+
+/** The portal's own keys for a row of tabs (core/web/src/tab-keys.ts), word for word. */
+function tabKeys(e: React.KeyboardEvent<HTMLElement>) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const tabs = [...e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')].filter((tab) => !(tab as HTMLButtonElement).disabled);
+  const at = tabs.indexOf((e.target as Element).closest<HTMLElement>('[role="tab"]') as HTMLElement);
+  if (at < 0) return;
+  const next = e.key === "ArrowRight" ? at + 1 : e.key === "ArrowLeft" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : null;
+  if (next === null) return;
+  e.preventDefault();
+  const tab = tabs[(next + tabs.length) % tabs.length];
+  tab.focus();
+  tab.click();
+}
+
 const ui = {
   Section: ({ title, hint, action, children }: { title: string; hint?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) => (
     <section aria-label={title}>
@@ -68,6 +83,32 @@ const ui = {
     </section>
   ),
   Empty: ({ children }: { children: React.ReactNode }) => <p data-testid="empty">{children}</p>,
+  // As the portal draws them: a row of radios with the one that holds checked, its labels said through the portal's own
+  // texts, which do not have an extension's (here, as they are given); a switch named by its label; a native disclosure.
+  Segments: ({ label, value, options, onChange, showLabel }: { label: string; value: string; options: { id: string; label: string }[]; onChange: (id: string) => void; showLabel?: boolean }) => (
+    <div role="radiogroup" aria-label={label}>
+      {showLabel && <span>{label}</span>}
+      {options.map((o) => (
+        <button key={o.id} type="button" role="radio" aria-checked={value === o.id} onClick={() => onChange(o.id)} className={button}>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  ),
+  Switch: ({ on, onChange, label }: { on: boolean; onChange: (on: boolean) => void; label: string }) => (
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} className={button}>
+      {on ? "on" : "off"}
+    </button>
+  ),
+  DetailsGroup: ({ title, summary, defaultOpen = false, children }: { title: string; summary: React.ReactNode; defaultOpen?: boolean; children: React.ReactNode }) => (
+    <details open={defaultOpen} data-setting={title}>
+      <summary>
+        <span>{title}</span> <span>{summary}</span>
+      </summary>
+      <div>{children}</div>
+    </details>
+  ),
+  tabKeys,
   ErrorBanner: ({ children }: { children: React.ReactNode }) => <div role="alert">{children}</div>,
   LoadFailed: ({ error }: { error: string }) => <div role="alert">{String(error)}</div>,
   RowsSkeleton: ({ label }: { label?: string }) => <p>{label}</p>,
