@@ -1,8 +1,22 @@
-# A release of the 3D Avatar, on its tag: avatar-v<version>, the version in avatar/package.json.
+# A release of the 3D Avatar: avatar-v<version>, the version in avatar/package.json. Merging a pull request that
+# changes that version releases it, and a tag pushed by hand still does.
 #
+# 0. The gate, a job that is cheap and runs first, works out the tag and the version. On a tag, the tag has to be
+#    avatar-v<the version in avatar/package.json>. On a push to main that changes avatar/package.json, the tag is
+#    avatar-v<its version>: where that tag is there already (the edit left the version as it was, or the version was
+#    tagged by hand), the run ends there and releases nothing; otherwise the gate puts the tag on the pushed commit and
+#    pushes it with the job's GITHUB_TOKEN. GitHub starts no workflow run for what GITHUB_TOKEN pushes (only
+#    workflow_dispatch, repository_dispatch and some pull_request events are exceptions:
+#    https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow#triggering-a-workflow-from-a-workflow),
+#    so that tag does not start this workflow a second time. One release of the avatar runs at a time (the concurrency
+#    group), so a merge and a hand-pushed tag of one version cannot both release it: the merge's run finds the tag and
+#    stops, and a tag pushed by hand after the gate pushed it is refused, or has nothing to push.
+#    If a tag ruleset limits who may create *-v* tags, github-actions[bot] (the GitHub Actions app) has to be on its
+#    bypass list, or the gate's push is refused. If the release job fails after the gate pushed the tag, "Re-run
+#    failed jobs" runs it again for that tag; re-running all jobs runs the gate again, which finds the tag and stops.
 # 1. Its build and unit tests, as test.yml runs them. The browser tests are not run again: they take minutes (Chromium
-#    with its system packages, and the sample models fetched from elsewhere), and test.yml has run them on every pull
-#    request and on the push to main of the commit a tag is put on.
+#    with its system packages, and the sample models fetched from elsewhere), and test.yml runs them on every pull
+#    request (the version bump's among them) and on every push to main.
 # 2. The package, @pithagoras/flair-avatar, goes to npm. npm's trusted publishing signs in with this workflow's identity
 #    (`id-token: write`), with no token, and adds provenance. Only a package that is there can be given a trusted
 #    publisher, so its first version is published by hand (`npm publish -w avatar --auth-type=web`, from a clean
@@ -15,19 +29,64 @@ name: Avatar release
 on:
   push:
     tags: ["avatar-v*"]
+    branches: [main]
+    # For the push to main only: GitHub does not look at paths for a tag.
+    paths: [avatar/package.json]
 
-permissions:
-  contents: write
-  # npm's trusted publishing.
-  id-token: write
+concurrency:
+  group: avatar-release
+  cancel-in-progress: false
 
 env:
   # How the package goes to npm: see 2. above.
   NPM_PUBLISH: ${{ vars.NPM_STAGE == 'true' && 'npm stage publish' || 'npm publish' }} -w avatar --access public
 
 jobs:
-  avatar:
+  # 0. above.
+  gate:
     runs-on: ubuntu-24.04
+    permissions:
+      # To push the tag.
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+      release: ${{ steps.tag.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag, and whether there is anything to release
+        id: tag
+        run: |
+          VERSION=$(node -p "require('./avatar/package.json').version")
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            TAG=$GITHUB_REF_NAME
+            [ "$TAG" = "avatar-v$VERSION" ] || { echo "the tag $TAG is not avatar-v$VERSION"; exit 1; }
+          else
+            TAG=avatar-v$VERSION
+            # An assignment, so that a failed ls-remote fails the step rather than reading as no tag.
+            REMOTE=$(git ls-remote --tags origin "refs/tags/$TAG")
+            if [ -n "$REMOTE" ]; then
+              echo "$TAG exists: nothing to release"
+              echo "release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+          { echo "tag=$TAG"; echo "version=$VERSION"; echo "release=true"; } >> "$GITHUB_OUTPUT"
+
+  avatar:
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      # The GitHub release.
+      contents: write
+      # npm's trusted publishing.
+      id-token: write
+    env:
+      TAG: ${{ needs.gate.outputs.tag }}
+      VERSION: ${{ needs.gate.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,11 +97,6 @@ jobs:
       # Node 22 comes with npm 10: trusted publishing takes 11.5.1 or later, and `npm stage` 11.15. One version.
       - name: npm 11
         run: npm install -g npm@11.21.0 && npm --version
-      - name: The tag is the package's version
-        run: |
-          VERSION=$(node -p "require('./avatar/package.json').version")
-          [ "$GITHUB_REF_NAME" = "avatar-v$VERSION" ] || { echo "the tag $GITHUB_REF_NAME is not avatar-v$VERSION"; exit 1; }
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run build
       - run: npm test
@@ -58,4 +112,4 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "3D Avatar $VERSION" --notes "@pithagoras/flair-avatar $VERSION: the extension (npm:@pithagoras/flair-avatar@$VERSION). See avatar/README.md for what it does and how to install it."
+          gh release create "$TAG" --verify-tag --title "3D Avatar $VERSION" --notes "@pithagoras/flair-avatar $VERSION: the extension (npm:@pithagoras/flair-avatar@$VERSION). See avatar/README.md for what it does and how to install it."
