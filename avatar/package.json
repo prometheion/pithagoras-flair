@@ -10,14 +10,14 @@
     "avatar",
     "voice"
   ],
-  "homepage": "https://github.com/thecodacus/pithagoras-flair/tree/main/avatar",
+  "homepage": "https://github.com/prometheion/pithagoras-flair/tree/main/avatar",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thecodacus/pithagoras-flair.git",
+    "url": "git+https://github.com/prometheion/pithagoras-flair.git",
     "directory": "avatar"
   },
   "bugs": {
-    "url": "https://github.com/thecodacus/pithagoras-flair/issues"
+    "url": "https://github.com/prometheion/pithagoras-flair/issues"
   },
   "pi": {},
   "pithagoras": {
