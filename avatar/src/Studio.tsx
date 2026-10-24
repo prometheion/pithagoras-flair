@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
 import { Avatar } from "./Avatar";
 import { Licence } from "./Licence";
@@ -12,6 +12,12 @@ import { NAME_MAX } from "./vrm-file";
  * The model chosen on the Settings page, as a card of its own: its name (renamed in place), its file to download, a
  * way to delete it, what its licence says, a large live preview, and what can be set on it beside the preview.
  *
+ * The preview stays in view while what is set scrolls past it, so a change is seen as it is made. Where the card is
+ * 36rem wide or more it is beside the settings, as wide as there is room for up to 36rem and 62% of the screen's
+ * height, so it and its controls fit the Settings dialog; narrower, as on a phone or a tablet's narrow dialog, it is
+ * over them, held at the top of the page as they scroll under it, a third of the screen's height. The card is a size
+ * container for that: it is the card's width that counts, not the screen's, whatever the dialog has beside it.
+ *
  * What is set is saved as it is changed: a slider when it is let go, a switch or a choice at once. The preview draws
  * a slider's value while it is still held, and the saved settings reach every avatar of the model wherever it is drawn
  * (models.ts). Saves go one at a time, the newest last, so the server keeps the last change whatever order two
@@ -22,6 +28,9 @@ import { NAME_MAX } from "./vrm-file";
 const STATES: [AvatarMode, string][] = [
   ["idle", msg("Idle")], ["input", msg("Listening")], ["output", msg("Speaking")], ["thinking", msg("Thinking")], ["muted", msg("Muted")],
 ];
+
+/** The preview's framings: the bust voice mode draws in the middle of its stage, and the face it draws in a small box. */
+const FRAMINGS: [FramingKind, string][] = [["bust", msg("Bust")], ["face", msg("Face")]];
 
 /**
  * What the Talk button plays, each state for so many seconds: the person talks, the agent thinks (long enough for the
@@ -84,12 +93,14 @@ const RESET = icon(<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" />);
 const PLAY = icon(<path d="M8 5v14l11-7z" />);
 const STOP = icon(<path d="M7 7h10v10H7z" />);
 
-export function Studio({ model, onRename, onDelete, onSave }: {
+export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
   model: Model;
   onRename: (name: string) => Promise<boolean>;
   onDelete: () => void;
   /** Saves what differs from the defaults: false when it was refused, which the page says. */
   onSave: (settings: Partial<ModelSettings>) => Promise<boolean>;
+  /** The preview with its controls, for the page to bring into view when a model is chosen. */
+  previewRef?: Ref<HTMLDivElement>;
 }) {
   const saved = withDefaults(model.settings);
   // A slider's value while it is held, and the value sent and not yet answered: the preview and the controls show them.
@@ -135,17 +146,20 @@ export function Studio({ model, onRename, onDelete, onSave }: {
   const set = (patch: Partial<ModelSettings>) => void save({ ...drawn, ...patch });
 
   return (
-    <div role="region" aria-label={model.name} className="rounded-2xl border border-line bg-raised/40 p-4">
+    <div role="region" aria-label={model.name} className="rounded-2xl border border-line bg-raised/40 p-4 [container-type:inline-size]">
       <Header model={model} onRename={onRename} onDelete={onDelete} />
       <div className="mt-3">
         <Licence model={model} />
       </div>
-      <div className="mt-5 lg:grid lg:grid-cols-[22rem_minmax(0,1fr)] lg:gap-6">
-        {/* Stays in view while the controls scroll past, so a change is seen as it is made. */}
-        <div className="lg:sticky lg:top-0 lg:self-start">
-          <Preview model={model} settings={drawn} />
+      <div className="mt-5 grid gap-4 [@container(min-width:36rem)]:grid-cols-[minmax(0,3fr)_minmax(14rem,2fr)] [@container(min-width:36rem)]:gap-6">
+        {/* Held at the top of the page. Over the settings, it hides them as they scroll under it: the card's own colour,
+            as the card's is the page's under its own. */}
+        <div ref={previewRef} className="sticky top-0 z-10 bg-surface [@container(min-width:36rem)]:self-start">
+          <div className="bg-raised/40 pb-3">
+            <Preview model={model} settings={drawn} />
+          </div>
         </div>
-        <div className="mt-5 min-w-0 lg:mt-0">
+        <div className="min-w-0">
           <Controls
             settings={drawn}
             onMove={(patch) => hold({ ...(holding.current ?? drawn), ...patch })}
@@ -256,9 +270,14 @@ function NameField({ value, onFinish }: { value: string; onFinish: (name: string
 
 /**
  * The model drawn live in a large dark square, as the Avatar dialog's preview is, in the bust voice mode draws in the
- * middle of its stage or the face it draws in a small box, in a state chosen under it, with the dialog's made-up voice
- * (syllables rising and falling inside slower phrases) while it listens or speaks. Talk plays a whole turn. What is
- * drawn while the model is not says why: still loading, a model that cannot be drawn, or a browser without WebGL 2.
+ * middle of its stage or the face it draws in a small box (chosen on the square's corner, as a camera's), in a state
+ * chosen under it, with the dialog's made-up voice (syllables rising and falling inside slower phrases) while it
+ * listens or speaks. Talk, beside the states it plays through, plays a whole turn. What is drawn while the model is not
+ * says why: still loading, a model that cannot be drawn, or a browser without WebGL 2.
+ *
+ * The square's height is a share of the screen's small viewport (svh), which does not change as a phone's address bar
+ * comes and goes: the model is not drawn at a new size as the page scrolls. The five states are one row of equal
+ * cells, small enough for German on a phone, as in the Avatar dialog.
  */
 function Preview({ model, settings }: { model: Model; settings: ModelSettings }) {
   const { ui } = portal;
@@ -292,8 +311,12 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
     : shownNow === "unsupported" ? t("WebGL 2 is not available in this browser, so voice mode shows the orb.")
     : t("Loading the model…");
   return (
-    <div className="max-w-[22rem]">
-      <div role="region" aria-label={t("Preview")} className="grid aspect-square w-full place-items-center overflow-hidden rounded-xl bg-[#0b1220]">
+    <div className="mx-auto w-full [@container(min-width:36rem)]:max-w-[min(36rem,62svh)]">
+      <div
+        role="region"
+        aria-label={t("Preview")}
+        className="relative mx-auto grid aspect-square w-full max-w-[34svh] place-items-center overflow-hidden rounded-xl bg-[#0b1220] [@container(min-width:36rem)]:max-w-none"
+      >
         {/* The canvas is larger than the box by 3/14 of it on each side: at 70% the canvas fills the square. */}
         <div className="relative aspect-square w-[70%]" data-testid="flair-avatar-preview">
           <Avatar
@@ -306,40 +329,46 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
             orb={<p aria-hidden="true" className="absolute inset-0 grid place-items-center text-center text-xs text-[#acc9ee]">{why}</p>}
           />
         </div>
+        {/* On the dark square in either theme, so in its colours, not the theme's. */}
+        <div role="radiogroup" aria-label={t("Framing")} className="absolute right-2 top-2 flex gap-0.5 rounded-lg bg-[#0b1220]/80 p-0.5 ring-1 ring-inset ring-white/10">
+          {FRAMINGS.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={framing === id}
+              onClick={() => setFraming(id)}
+              className={`rounded-md px-2 py-0.5 text-[11px] transition ${framing === id ? "bg-white/15 text-white" : "text-[#acc9ee] hover:text-white"}`}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
       </div>
       <p role="status" className="sr-only">{shownNow === "drawn" ? "" : why}</p>
-      <div className="mt-2 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <ui.Segments
-            label={t("Framing")}
-            showLabel
-            size="sm"
-            value={framing}
-            onChange={setFraming}
-            options={[{ id: "bust", label: t("Bust") }, { id: "face", label: t("Face") }]}
-          />
+      <div role="radiogroup" aria-label={t("Preview state")} className="mt-2 grid grid-cols-5 gap-1">
+        {STATES.map(([id, label]) => (
           <button
+            key={id}
             type="button"
-            className={ui.classes.primarySmall}
-            aria-pressed={step !== undefined}
-            aria-describedby={talkHint}
-            onClick={() => setStep(step === undefined ? 0 : undefined)}
+            role="radio"
+            aria-checked={mode === id}
+            onClick={() => {
+              setChosen(id);
+              setStep(undefined);
+            }}
+            className={`rounded-md px-1 py-1 text-[11px] transition ${mode === id ? "bg-accent/12 text-accent ring-1 ring-inset ring-accent/25" : "bg-fg/5 text-fg-muted hover:bg-fg/10"}`}
           >
-            {step === undefined ? PLAY : STOP}
-            {step === undefined ? t("Talk") : t("Stop")}
+            {t(label)}
           </button>
-        </div>
-        <ui.Segments
-          label={t("Preview state")}
-          size="sm"
-          value={mode}
-          onChange={(next) => {
-            setChosen(next);
-            setStep(undefined);
-          }}
-          options={STATES.map(([id, label]) => ({ id, label: t(label) }))}
-        />
-        <p id={talkHint} className="text-[11px] text-fg-faint">{t("Plays a made-up turn: you talk, it thinks, then it answers.")}</p>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-2.5">
+        <button type="button" className={`shrink-0 ${ui.classes.primarySmall}`} aria-describedby={talkHint} onClick={() => setStep(step === undefined ? 0 : undefined)}>
+          {step === undefined ? PLAY : STOP}
+          {step === undefined ? t("Talk") : t("Stop")}
+        </button>
+        <p id={talkHint} className="min-w-0 text-[11px] text-fg-faint">{t("Plays a made-up turn: you talk, it thinks, then it answers.")}</p>
       </div>
     </div>
   );

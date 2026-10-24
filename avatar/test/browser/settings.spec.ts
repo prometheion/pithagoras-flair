@@ -228,12 +228,14 @@ test("the preview draws the bust voice mode draws, or the face, in the state cho
   await states.nth(2).click();
 
   // Listening 2.5 s, thinking 2 s, speaking 4 s, then the state chosen before.
+  // Its name says what pressing it does: Talk, then Stop while the turn plays.
   const talk = page.getByRole("button", { name: "Talk" });
-  await expect(talk).toHaveAttribute("aria-pressed", "false");
+  await expect(talk).not.toHaveAttribute("aria-pressed");
+  await expect(talk).toHaveAccessibleDescription("Plays a made-up turn: you talk, it thinks, then it answers.");
   const started = Date.now();
   await talk.click();
   const stop = page.getByRole("button", { name: "Stop" });
-  await expect(stop).toHaveAttribute("aria-pressed", "true");
+  await expect(stop).toBeVisible();
   await expect(checked).toHaveText("Listening");
   const at = async (text: string) => {
     await expect(checked).toHaveText(text, { timeout: 6000 });
@@ -254,7 +256,7 @@ test("the preview draws the bust voice mode draws, or the face, in the state cho
   await talk.click();
   await states.nth(4).click();
   await expect(checked).toHaveText("Muted");
-  await expect(talk).toHaveAttribute("aria-pressed", "false");
+  await expect(talk).toBeVisible();
 });
 
 test("a slider is saved as it is let go, drawn before, and its portrait made again; Reset to defaults saves them all", async ({ page, request }) => {
@@ -396,6 +398,41 @@ test("a portrait made before the drawing changed is made again when the page is 
   await open(page, request, "en", false);
   await page.waitForTimeout(3000);
   expect(sent).toBe(0);
+});
+
+test("the preview is wider than the settings beside it; on a phone it is over them, held at the top as they scroll, its states one row", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await open(page, request);
+  await addOne(page, Buffer.from(tinyVrm1()));
+  const preview = page.getByRole("region", { name: "Preview" });
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  const [square, slider] = [(await preview.boundingBox())!, (await zoom.boundingBox())!];
+  expect(square.width).toBeGreaterThan(slider.width);
+  expect(Math.abs(square.width - square.height)).toBeLessThan(1);
+  // Beside: the settings start at the square's top, not under it.
+  expect(slider.x).toBeGreaterThan(square.x + square.width);
+  expect(slider.y).toBeLessThan(square.y + square.height);
+  const held = async () => {
+    await page.getByRole("button", { name: "Reset to defaults" }).scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollBy(0, 200));
+    const box = (await preview.boundingBox())!;
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    expect(box.y).toBeGreaterThanOrEqual(-1);
+    expect(box.y).toBeLessThan(40);
+    return box;
+  };
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.setViewportSize({ width: 375, height: 812 });
+  const over = (await preview.boundingBox())!;
+  expect(over.y + over.height).toBeLessThan((await zoom.boundingBox())!.y);
+  // A third of the screen's height, so the settings have the rest.
+  expect(over.height).toBeLessThan(812 * 0.35);
+  const states = page.getByRole("radiogroup", { name: "Preview state" }).getByRole("radio");
+  const tops = await states.evaluateAll((all) => all.map((state) => state.getBoundingClientRect().top));
+  expect(new Set(tops).size).toBe(1);
+  await held();
+  expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
 });
 
 test("on a phone the page is one column: two cards to a row, the preview above the controls, and nothing wider than the screen", async ({ page, request }) => {
