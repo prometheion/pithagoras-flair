@@ -1,15 +1,19 @@
 import { expect, test, type APIRequestContext, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { DEFAULT_SETTINGS } from "../../src/model-settings.ts";
 import { DRAW_VERSION, portraitStamp } from "../../src/stage.ts";
+import { readFileSync } from "node:fs";
 import { tinyVrm0, tinyVrm1 } from "../tiny-vrm.ts";
+import { tinyVrma } from "../tiny-vrma.ts";
+import { sample } from "./fetch-models.ts";
+import { played, seen, track, VIEWER_LEFT, watchFrames, within } from "./frame.ts";
 
 /**
  * The 3D Avatar's page in Settings, on the extension's test page: the gallery of models, added from files picked or
  * dropped, the free models it points to while there are none, a file refused in the page's words, what a model's
  * licence says, renaming, downloading and deleting it, the portrait made for an agent's card and made again when it
  * is out of date, the live preview with its framing, states and Talk, what can be set on a model in its tabs and how it
- * is saved, each tab's Reset and Undo, how tall the designer is on a laptop's screen, a larger one and a phone, and all
- * of it in German.
+ * is saved, each tab's Reset and Undo, its gesture clips, how tall the designer is on a laptop's screen, a larger one
+ * and a phone, and all of it in German.
  */
 
 const API = "/api/x/%40pithagoras/flair-avatar";
@@ -18,6 +22,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 async function open(page: Page, request: APIRequestContext, lang = "en", reset = true) {
   if (reset) await request.post("/reset");
+  await watchFrames(page);
   await page.goto(`/?lang=${lang}`);
   await page.waitForFunction(() => (window as any).harness?.ready);
   await page.evaluate(() => (window as any).harness.settings());
@@ -456,7 +461,7 @@ test("each tab has its own settings in the one panel, each slider says its value
     ["Motion", [["Overall motion", "100%"], ["Breathing and sway", "100%"], ["Leaning in", "100%"]]],
     ["Eyes", [["Blinking", "About 15 a minute"]]],
     ["Voice", [["Mouth sensitivity", "100%"]]],
-    ["Arms", [["Arm angle", "69°"]]],
+    ["Arms", [["Arm angle", "69°"], ["Gestures", "100%"]]],
   ] as const) {
     await tab(page, name).click();
     await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
@@ -467,6 +472,8 @@ test("each tab has its own settings in the one panel, each slider says its value
   }
   await tab(page, "Motion").click();
   await expect(panel.getByRole("switch", { name: "Thinking pose" })).toBeVisible();
+  await tab(page, "Voice").click();
+  await expect(panel.getByRole("switch", { name: "Mouth shapes" })).toHaveAttribute("aria-checked", "true");
   await tab(page, "Eyes").click();
   await expect(panel.getByRole("radiogroup", { name: "Gaze" })).toBeVisible();
 
@@ -507,6 +514,17 @@ test("each tab has its own settings in the one panel, each slider says its value
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05, thinkingPose: false, gaze: "around" });
   expect(sent.length).toBe(2);
   for (const name of ["Voice", "Arms"]) await expect(dot(name)).toHaveCount(0);
+  await tab(page, "Voice").click();
+  await page.getByRole("switch", { name: "Mouth shapes" }).click();
+  await expect(dot("Voice")).toHaveCount(1);
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05, thinkingPose: false, gaze: "around", mouthShapes: false });
+  await tab(page, "Arms").click();
+  await slider("Gestures").focus();
+  await slider("Gestures").press("ArrowLeft");
+  await expect(slider("Gestures")).toHaveAttribute("aria-valuetext", "95%");
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05, thinkingPose: false, gaze: "around", mouthShapes: false, gestures: 0.95 });
+  await expect(dot("Arms")).toHaveCount(1);
+  expect(sent.length).toBe(4);
 });
 
 test("the tabs are the portal's: arrows round the ends, Home and End, the tab shown selected and the one stop of Tab, and kept as another model is chosen", async ({ page, request }) => {
@@ -515,6 +533,8 @@ test("the tabs are the portal's: arrows round the ends, Home and End, the tab sh
     { name: "one.vrm", buffer: Buffer.from(tinyVrm1()) },
     { name: "zero.vrm", buffer: Buffer.from(tinyVrm0()) },
   ]);
+  // The last one added is chosen once it is in: its card drawn again would take the focus from a tab.
+  await expect(cards(page).filter({ hasText: "Tiny Zero" })).toHaveAttribute("aria-pressed", "true");
   const list = page.getByRole("tablist", { name: "Look and motion" });
   const tabs = list.getByRole("tab");
   await expect(tabs).toHaveText(["Camera", "Light", "Motion", "Eyes", "Voice", "Arms"]);
@@ -555,6 +575,62 @@ test("the tabs are the portal's: arrows round the ends, Home and End, the tab sh
   await expect(page.getByRole("slider", { name: "Mouth sensitivity" })).toBeVisible();
 });
 
+test("a gesture clip is uploaded, listed by its file's name, replaced and removed; one that is not a VRM Animation is refused in the page's words", async ({ page, request }) => {
+  await open(page, request);
+  await addOne(page, Buffer.from(tinyVrm1()));
+  await tab(page, "Arms").click();
+  const arms = page.getByRole("tabpanel", { name: "Arms", exact: true });
+  const wave = arms.getByRole("group", { name: "Wave", exact: true });
+  const chin = arms.getByRole("group", { name: "Hand to the chin", exact: true });
+  await expect(wave).toContainText("As voice mode starts. Built in.");
+  await expect(chin).toContainText("When the agent thinks for more than a moment. Built in.");
+  await expect(wave.getByRole("button", { name: "Remove" })).toHaveCount(0);
+  const pick = (gesture: string, name: string, buffer: Uint8Array) => page.getByTestId(`flair-avatar-clip-${gesture}`).setInputFiles({ name, mimeType: "application/octet-stream", buffer: Buffer.from(buffer) });
+
+  await pick("greeting", "hello.vrma", tinyVrma());
+  await expect(wave).toContainText("hello.vrma");
+  await expect.poll(async () => (await listed(request))[0].clips?.greeting?.name).toBe("hello.vrma");
+  await expect(chin).toContainText("Built in.");
+  // Settings saved after keep it, and the tab's Reset leaves it: a clip is a file, not a setting.
+  const angle = page.getByRole("slider", { name: "Arm angle" });
+  await angle.focus();
+  await angle.press("ArrowRight");
+  await page.getByRole("button", { name: "Reset Arms" }).click();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({});
+  expect((await listed(request))[0].clips.greeting.name).toBe("hello.vrma");
+  await expect(wave).toContainText("hello.vrma");
+
+  await pick("greeting", "again.vrma", tinyVrma((json) => (json.asset.generator = "another")));
+  await expect(wave).toContainText("again.vrma");
+  await expect(wave.getByRole("button", { name: "Replace" })).toBeVisible();
+  await pick("thinking", "model.vrma", tinyVrm1());
+  await expect(page.getByRole("alert")).toHaveText("This is not a VRM Animation file.");
+  await expect(chin).toContainText("Built in.");
+  await wave.getByRole("button", { name: "Remove" }).click();
+  await expect(wave).toContainText("Built in.");
+  await expect.poll(async () => (await listed(request))[0].clips).toEqual({});
+});
+
+test("Try waves in the preview, whatever state it shows", async ({ page, request }) => {
+  const file = sample("twist");
+  test.skip(!file, "the sample model could not be fetched");
+  test.slow();
+  await open(page, request);
+  await addOne(page, readFileSync(file!), "twist.vrm");
+  await drawn(page);
+  const preview = '[data-testid="flair-avatar-preview"] canvas';
+  // Speaking, as the preview starts: no wave of its own. Two seconds of its motion, which a slow renderer plays slowly (frame.ts).
+  await played(page, 2);
+  const before = await within(page, VIEWER_LEFT, preview);
+  await tab(page, "Arms").click();
+  await track(page, [VIEWER_LEFT]);
+  await page.getByRole("group", { name: "Wave", exact: true }).getByRole("button", { name: "Try" }).click();
+  // Every frame of a second of it, from the press.
+  await played(page, 1);
+  expect(Math.max(...(await seen(page)).map((f) => f.covered[0]))).toBeGreaterThan(before + 1000);
+});
+
 test("a refused save is said over the page, and the controls show what is saved again", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
@@ -569,7 +645,7 @@ test("a refused save is said over the page, and the controls show what is saved 
 test("with less motion asked for by the system, the Motion tab says what that leaves", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
-  const note = "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.";
+  const note = "Your system asks for less motion: breathing, sway, eye movement and gestures stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.";
   await expect(page.getByText(note)).toHaveCount(0);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page, request, "en", false);
@@ -786,9 +862,20 @@ test("in German, all of it", async ({ page, request }) => {
   await expect(slider("Blinzeln")).toHaveAttribute("aria-valuetext", "Etwa 15 pro Minute");
   await expect(page.getByRole("radiogroup", { name: "Blick" }).getByRole("radio")).toHaveText(["Auf dich", "Umher"]);
   await tab(page, "Stimme").click();
+  await expect(page.getByRole("switch", { name: "Mundformen" })).toBeVisible();
   await expect(slider("Empfindlichkeit des Munds")).toHaveAccessibleDescription("Wie weit sich der Mund bei gleicher Lautstärke öffnet. Erhöhe sie für eine leise Stimme.");
   await tab(page, "Arme").click();
   await expect(slider("Armwinkel")).toHaveAttribute("aria-valuetext", "69°");
+  await expect(slider("Gesten")).toHaveAttribute("aria-valuetext", "100\u00a0%");
+  const arme = page.getByRole("tabpanel", { name: "Arme", exact: true });
+  await expect(arme).toContainText("Gestenclips");
+  for (const name of ["Winken", "Hand ans Kinn"]) {
+    const row = arme.getByRole("group", { name, exact: true });
+    await expect(row).toContainText("Eingebaut.");
+    for (const button of ["Ausprobieren", "Hochladen"]) await expect(row.getByRole("button", { name: button, exact: true })).toBeVisible();
+  }
+  await page.getByTestId("flair-avatar-clip-greeting").setInputFiles({ name: "kein.vrma", mimeType: "application/octet-stream", buffer: Buffer.from(tinyVrm1()) });
+  await expect(page.getByRole("alert")).toHaveText("Das ist keine VRM-Animationsdatei.");
   await expect(one.getByRole("button", { name: "Arme zurücksetzen", exact: true })).toBeDisabled();
   await tab(page, "Kamera").click();
   const zoom = slider("Zoom");

@@ -27,6 +27,7 @@ test("what the page sends is taken as it is: nothing, some of the settings, or a
     assert.deepEqual(checkSettings({ [key]: max }), { [key]: max });
   }
   assert.deepEqual(checkSettings({ thinkingPose: false }), { thinkingPose: false });
+  assert.deepEqual(checkSettings({ mouthShapes: false, gestures: 0 }), { mouthShapes: false, gestures: 0 });
 });
 
 test("anything else is refused, naming the setting it is about", () => {
@@ -48,6 +49,9 @@ test("anything else is refused, naming the setting it is about", () => {
   }
   refused({ thinkingPose: "yes" }, "thinkingPose");
   refused({ thinkingPose: 1 }, "thinkingPose");
+  refused({ mouthShapes: "off" }, "mouthShapes");
+  refused({ mouthShapes: 0 }, "mouthShapes");
+  refused({ gestures: true }, "gestures");
   refused({ gaze: "away" }, "gaze");
   refused({ gaze: undefined }, "gaze");
   // Not settings at all.
@@ -65,4 +69,5 @@ test("a record's settings are filled with the defaults, and what differs from th
   assert.deepEqual(changed(withDefaults(undefined)), {});
   assert.deepEqual(changed(withDefaults({ zoom: 1.5, thinkingPose: false, armDown: 1.2 })), { zoom: 1.5, thinkingPose: false });
   assert.deepEqual(changed({ ...DEFAULT_SETTINGS, warmth: -0.4, mouth: 2 }), { warmth: -0.4, mouth: 2 });
+  assert.deepEqual(changed({ ...DEFAULT_SETTINGS, gestures: 0.5, mouthShapes: false }), { gestures: 0.5, mouthShapes: false });
 });

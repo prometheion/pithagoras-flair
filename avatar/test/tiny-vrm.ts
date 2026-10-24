@@ -1,8 +1,9 @@
 /**
  * Two VRM models made in code, so the tests need no model file in the repository: the 15 bones three-vrm needs plus
- * chest, neck and the eyes, one triangle in front of the head with a morph target that the mouth (`aa`) and the blink are bound
- * to, a meta with a licence, and the eyes looking by their bones. `tinyVrm1` is VRM 1.0 (`VRMC_vrm`), `tinyVrm0` the
- * same as VRM 0.x (`VRM`). Each takes a change to its glTF JSON, for a test of a damaged copy.
+ * chest, neck and the eyes, one triangle in front of the head with a morph target that the mouth's five shapes (`aa`,
+ * `ih`, `ou`, `ee`, `oh`) and the blink are bound to, a meta with a licence, and the eyes looking by their bones.
+ * `tinyVrm1` is VRM 1.0 (`VRMC_vrm`), `tinyVrm0` the same as VRM 0.x (`VRM`). Each takes a change to its glTF JSON, for
+ * a test of a damaged copy.
  */
 
 type Json = Record<string, any>;
@@ -74,7 +75,7 @@ export function vrm1Json(): Json {
         modification: "allowModificationRedistribution",
       },
       humanoid: { humanBones: Object.fromEntries(BONES.map(([name], node) => [name, { node }])) },
-      expressions: { preset: { aa: bind, blink: bind } },
+      expressions: { preset: { aa: bind, ih: bind, ou: bind, ee: bind, oh: bind, blink: bind } },
       lookAt: { type: "bone", offsetFromHeadBone: [0, 0.06, 0] },
     },
   };
@@ -90,7 +91,9 @@ export function vrm0Json(): Json {
       specVersion: "0.0",
       meta: { title: "Tiny Zero", author: "Pithagoras Flair tests", licenseName: "CC0", allowedUserName: "Everyone", commercialUssageName: "Allow" },
       humanoid: { humanBones: BONES.map(([bone], node) => ({ bone, node })) },
-      blendShapeMaster: { blendShapeGroups: [{ name: "A", presetName: "a", binds }, { name: "Blink", presetName: "blink", binds }] },
+      blendShapeMaster: {
+        blendShapeGroups: [...["a", "i", "u", "e", "o"].map((vowel) => ({ name: vowel.toUpperCase(), presetName: vowel, binds })), { name: "Blink", presetName: "blink", binds }],
+      },
       // Its eyes looking by their bones, over the ranges a VRM 1.0 model has when it gives none, on the straight curve
       // (three-vrm warns of any other).
       firstPerson: {
@@ -105,10 +108,12 @@ export function vrm0Json(): Json {
   return json;
 }
 
-/** A GLB of `json` and the triangle: its header, the JSON chunk padded with spaces, the binary chunk. */
-export function glb(json: Json): Uint8Array<ArrayBuffer> {
+/** A GLB of `json` and the triangle. */
+export const glb = (json: Json): Uint8Array<ArrayBuffer> => glbOf(json, triangle(json.extensionsUsed?.includes("VRM") ? -1 : 1));
+
+/** A GLB of `json` and `bin`: its header, the JSON chunk padded with spaces, the binary chunk (a multiple of 4 bytes). */
+export function glbOf(json: Json, bin: Uint8Array): Uint8Array<ArrayBuffer> {
   const text = new TextEncoder().encode(JSON.stringify(json));
-  const bin = triangle(json.extensionsUsed?.includes("VRM") ? -1 : 1);
   const jsonLength = Math.ceil(text.byteLength / 4) * 4;
   const out = new Uint8Array(12 + 8 + jsonLength + 8 + bin.byteLength);
   const view = new DataView(out.buffer);

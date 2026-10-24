@@ -32,7 +32,7 @@ three 0.186.1 (https://threejs.org, https://github.com/mrdoob/three.js): the ren
 
 ## three-vrm
 
-The npm packages `@pixiv/three-vrm`, `@pixiv/three-vrm-core`, `@pixiv/three-vrm-materials-mtoon`, `@pixiv/three-vrm-materials-v0compat`, `@pixiv/three-vrm-materials-hdr-emissive-multiplier`, `@pixiv/three-vrm-node-constraint`, `@pixiv/three-vrm-springbone`, all 3.5.5, from pixiv's three-vrm (https://github.com/pixiv/three-vrm): what reads a VRM model and moves its expressions, its eyes, its bones and its spring bones. Licensed under the MIT License; each of the packages carries the same text.
+The npm packages `@pixiv/three-vrm`, `@pixiv/three-vrm-core`, `@pixiv/three-vrm-materials-mtoon`, `@pixiv/three-vrm-materials-v0compat`, `@pixiv/three-vrm-materials-hdr-emissive-multiplier`, `@pixiv/three-vrm-node-constraint`, `@pixiv/three-vrm-springbone`, `@pixiv/three-vrm-animation`, all 3.5.5, from pixiv's three-vrm (https://github.com/pixiv/three-vrm): what reads a VRM model and moves its expressions, its eyes, its bones and its spring bones, and what reads a VRM Animation clip. Licensed under the MIT License; each of the packages carries the same text.
 
     Copyright (c) 2019-2026 pixiv Inc.
 

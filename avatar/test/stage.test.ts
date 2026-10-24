@@ -3,10 +3,14 @@ import assert from "node:assert/strict";
 import { Color, Euler, MathUtils, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
+import { VRMAnimationLoaderPlugin, type VRMAnimation } from "@pixiv/three-vrm-animation";
+import { clipFor, playClip, unpose } from "../src/clips.ts";
+import { BONES } from "../src/gestures.ts";
 import { DEFAULT_SETTINGS, type ModelSettings } from "../src/model-settings.ts";
 import { createMotion, type MotionInput } from "../src/motion.ts";
 import { aim, COOL, DRAW_VERSION, framed, lighting, portraitStamp, pose, rest, WARM } from "../src/stage.ts";
 import { tinyVrm0, tinyVrm1 } from "./tiny-vrm.ts";
+import { ARM_TO, HIPS_TO, tinyVrma } from "./tiny-vrma.ts";
 
 /**
  * Where the stage points the eyes (`aim`), measured on the eyes themselves: the tiny model read by three-vrm, as the
@@ -99,7 +103,9 @@ test("on a model whose eyes look by expressions, the same gaze is the same share
 
 /** Where the bones that show a pose are, in the scene, and which way each eye looks there (a unit vector, +z at rest). */
 type Seen = Record<string, Vector3>;
-const SHOWN = ["head", "leftEye", "rightEye", "leftUpperArm", "rightUpperArm", "leftHand", "rightHand", "leftUpperLeg", "rightUpperLeg"] as const;
+const SHOWN = [
+  "head", "leftEye", "rightEye", "leftUpperArm", "rightUpperArm", "leftLowerArm", "rightLowerArm", "leftHand", "rightHand", "leftUpperLeg", "rightUpperLeg",
+] as const;
 
 /**
  * A model read and at rest as the stage has it once loaded, with `settings` on it: what is seen of it, and a frame of it
@@ -118,8 +124,8 @@ async function posed(bytes: Uint8Array<ArrayBuffer>, settings: ModelSettings = D
   };
   const eyes = camera(vrm);
   const motion = createMotion(() => 0.5);
-  const frame = (input: Omit<MotionInput, "settings">): Seen => {
-    const moved = motion.step({ ...input, settings });
+  const frame = (input: Omit<MotionInput, "settings" | "clips">): Seen => {
+    const moved = motion.step({ ...input, settings, clips: {} });
     pose(vrm, moved);
     aim(vrm, eyes, moved.gaze);
     vrm.update(input.dt);
@@ -129,10 +135,10 @@ async function posed(bytes: Uint8Array<ArrayBuffer>, settings: ModelSettings = D
   return { seen, frame };
 }
 
-/** `seconds` of frames at 30 a second in `mode`, and what is seen in the last. */
-const run = (frame: (input: Omit<MotionInput, "settings">) => Seen, mode: MotionInput["mode"], seconds: number, output = 0) => {
+/** `seconds` of frames at 30 a second in `mode`, the reply at `output` (or the person heard at it), and what is seen in the last. */
+const run = (frame: (input: Omit<MotionInput, "settings" | "clips">) => Seen, mode: MotionInput["mode"], seconds: number, output = 0) => {
   let seen!: Seen;
-  for (let i = 0; i < 30 * seconds; i++) seen = frame({ mode, output, dt: 1 / 30, reduced: false });
+  for (let i = 0; i < 30 * seconds; i++) seen = frame({ mode, input: mode === "input" ? output : 0, output, dt: 1 / 30, reduced: false });
   return seen;
 };
 
@@ -161,16 +167,75 @@ test("leaning in moves the head towards the camera, on a VRM 0.x model as on a V
   }
 });
 
-test("a VRM 0.x model is posed as a VRM 1.0 one is: its sway, lean, nod, thinking tilt and look the same on screen", async () => {
+test("a VRM 0.x model is posed as a VRM 1.0 one is: its sway, lean, nod, thinking tilt, gestures and look the same on screen", async () => {
   const [zero, one] = [(await posed(tinyVrm0())).frame, (await posed(tinyVrm1())).frame];
-  for (const [mode, seconds, output] of [["idle", 3, 0], ["input", 2, 0], ["output", 2, 0.8], ["thinking", 3, 0]] as const) {
-    same(run(zero, mode, seconds, output), run(one, mode, seconds, output), mode);
+  // The wave as it waits first, a stir, the listening nods, the beats as it speaks, the hand to the chin.
+  for (const [mode, seconds, output] of [["idle", 1.5, 0], ["idle", 12, 0], ["input", 2, 0.6], ["input", 1, 0], ["output", 2, 0.8], ["thinking", 4, 0]] as const) {
+    same(run(zero, mode, seconds, output), run(one, mode, seconds, output), `${mode} for ${seconds} s`);
   }
   // Thinking, the head turns and tilts and the eyes look aside to the viewer's right and up, as on a VRM 1.0 model.
   const thinking = run(zero, "thinking", 1);
   assert.ok(thinking["leftEye looks"].x > 0.1 && thinking["leftEye looks"].y > 0.05, `the left eye looks along ${thinking["leftEye looks"].toArray()}`);
   // Its top to the viewer's left: the eye on the viewer's right, the model's left, higher.
   assert.ok(thinking.leftEye.y - thinking.rightEye.y > 0.005, `the left eye ${thinking.leftEye.y.toFixed(4)} m high, the right ${thinking.rightEye.y.toFixed(4)} m`);
+});
+
+test("waving, the right hand is beside the head, above the shoulder; with a long think it is at the chin, in front of the face", async () => {
+  for (const [version, bytes] of [["VRM 1.0", tinyVrm1()], ["VRM 0.x", tinyVrm0()]] as const) {
+    const { frame } = await posed(bytes);
+    // The wave is at its full from 1 s to 1.7 s after it waits 0.6 s.
+    const waving = run(frame, "idle", 1.4);
+    assert.ok(waving.rightHand.y > waving.rightUpperArm.y + 0.05, `${version}: the hand at ${waving.rightHand.y.toFixed(3)} m, the shoulder at ${waving.rightUpperArm.y.toFixed(3)} m`);
+    assert.ok(waving.rightHand.x < waving.rightUpperArm.x, `${version}: the hand outside the shoulder, ${waving.rightHand.x.toFixed(3)} m across`);
+    assert.ok(waving.leftHand.y < waving.leftUpperArm.y - 0.3, `${version}: the left hand stays down`);
+    const thinking = run(frame, "thinking", 5);
+    assert.ok(thinking.rightHand.y > thinking.rightUpperArm.y - 0.1, `${version}: the hand up at ${thinking.rightHand.y.toFixed(3)} m`);
+    assert.ok(thinking.rightHand.z > thinking.head.z + 0.05, `${version}: the hand in front of the face, at ${thinking.rightHand.z.toFixed(3)} m, the head at ${thinking.head.z.toFixed(3)} m`);
+    assert.ok(Math.abs(thinking.rightHand.x - thinking.head.x) < 0.1, `${version}: the hand under the chin, ${thinking.rightHand.x.toFixed(3)} m across`);
+  }
+});
+
+/** The tiny VRM Animation read as the stage reads a clip, for `vrm`. */
+async function tinyClip(vrm: VRM) {
+  const loader = new GLTFLoader();
+  loader.register((parser) => new VRMAnimationLoaderPlugin(parser));
+  const animation = (await loader.parseAsync(tinyVrma().buffer, "")).userData.vrmAnimations[0] as VRMAnimation;
+  return clipFor(animation, vrm, BONES);
+}
+
+test("a clip plays over the pose by its weight, on a VRM 0.x model as on a VRM 1.0 one, and the bones only it moves go back to rest", async () => {
+  const seen: Record<string, Record<number, Seen>> = {};
+  for (const [version, bytes] of [["VRM 1.0", tinyVrm1()], ["VRM 0.x", tinyVrm0()]] as const) {
+    const vrm = await read(bytes);
+    const clip = await tinyClip(vrm);
+    assert.equal(clip.duration, 1);
+    // The right upper arm is a bone the motion poses; the hips only the clip turns.
+    assert.deepEqual(clip.free, [vrm.humanoid.getNormalizedBoneNode("hips")]);
+    const motion = createMotion(() => 0.5);
+    const at = (weight: number) => {
+      unpose(clip);
+      pose(vrm, motion.step({ mode: "idle", input: 0, output: 0, dt: 0, reduced: true, settings: DEFAULT_SETTINGS, clips: {} }));
+      playClip(clip, 1, weight);
+      vrm.update(0);
+      vrm.scene.updateMatrixWorld(true);
+      const where: Seen = Object.fromEntries(SHOWN.map((name) => [name, vrm.humanoid.getRawBoneNode(name)!.getWorldPosition(new Vector3())]));
+      where.hipsTurn = new Vector3(0, new Euler().setFromQuaternion(vrm.humanoid.getNormalizedBoneNode("hips")!.quaternion, "YXZ").y, 0);
+      return where;
+    };
+    // Weight 0 last: what the clip turned before is put back.
+    seen[version] = { 1: at(1), 0.5: at(0.5), 0: at(0) };
+    const [rest, half, whole] = [seen[version][0], seen[version][0.5], seen[version][1]];
+    // At the clip's end the arm is raised 0.6 rad above level: the hand higher than the shoulder.
+    assert.ok(whole.rightHand.y > whole.rightUpperArm.y + 0.1, `${version}: the hand at ${whole.rightHand.y.toFixed(3)} m, the shoulder ${whole.rightUpperArm.y.toFixed(3)} m`);
+    assert.ok(rest.rightHand.y < rest.rightUpperArm.y - 0.3, `${version}: at weight 0 the arm is down`);
+    assert.ok(half.rightHand.y > rest.rightHand.y && half.rightHand.y < whole.rightHand.y, `${version}: halfway between`);
+    // The arm 0.6 rad above level, a turn of 1.8 rad from down: halfway is 0.9 rad from each.
+    const raised = new Vector3().subVectors(whole.rightLowerArm, whole.rightUpperArm).normalize();
+    near(Math.asin(raised.y), -ARM_TO, 0.01, `${version}: the upper arm's angle above level`);
+    near(whole.hipsTurn.y, HIPS_TO, 1e-4, `${version}: the hips turned`);
+    near(rest.hipsTurn.y, 0, 1e-9, `${version}: the hips at rest again at weight 0`);
+  }
+  for (const weight of [0, 0.5, 1]) same(seen["VRM 0.x"][weight], seen["VRM 1.0"][weight], `at weight ${weight}`);
 });
 
 test("at a smaller arm angle the hands are higher, still outside the hips, on a VRM 0.x model as on a VRM 1.0 one", async () => {

@@ -3,11 +3,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 /**
- * The sample models the browser tests draw, fetched into test/.models/ (not kept in git) from the commits they are
- * pinned to, and checked by their size and sha256. Neither is in this repository. Both are under the VRM Public
- * License 1.0 (https://vrm.dev/licenses/1.0/), which allows passing them on: pixiv's needs no credit; Seed-san's does
- * ("Seed-san model by VirtualCast, Inc."), so no picture of it is kept. A run without the network skips the tests
- * that need them, and says so.
+ * The sample models the browser tests draw, and a sample VRM Animation they play, fetched into test/.models/ (not kept
+ * in git) from the commits they are pinned to, and checked by their size and sha256. None is in this repository. The
+ * models are under the VRM Public License 1.0 (https://vrm.dev/licenses/1.0/), which allows passing them on: pixiv's
+ * needs no credit; Seed-san's does ("Seed-san model by VirtualCast, Inc."), so no picture of it is kept. The animation
+ * is three-vrm-animation's own example (an arm raised, a smile and a look), in pixiv's three-vrm repository under its
+ * MIT License. A run without the network skips the tests that need them, and says so.
  */
 export const MODELS = {
   twist: {
@@ -21,6 +22,12 @@ export const MODELS = {
     url: "https://raw.githubusercontent.com/vrm-c/vrm-specification/837f156dbce43ad69183ce1bdab549961ae1c1ee/samples/Seed-san/vrm/Seed-san.vrm",
     size: 10917800,
     sha256: "624d0d554bc205bbdc33e22a68a2c3c20edebb3e573011ead8878a65e5329b23",
+  },
+  clip: {
+    file: "test.vrma",
+    url: "https://raw.githubusercontent.com/pixiv/three-vrm/63dd83ce7834b4b8ffaedda71c7d8e5fffa421dd/packages/three-vrm-animation/examples/models/test.vrma",
+    size: 11548,
+    sha256: "38d0fd12d61e896f1a970b5e358ebb41a96c8d5ee8e284496ea18f0ba1f04e7b",
   },
 };
 

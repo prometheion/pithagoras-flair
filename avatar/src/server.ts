@@ -3,12 +3,15 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, rea
 import path from "node:path";
 import type { Request, Response } from "express";
 import type { ServerPortal } from "@pithagoras/extension-api/server";
+import { CLIP_GESTURES, type ClipGesture } from "./gestures";
 import type { Model } from "./model";
 import { BadSettings, checkSettings } from "./model-settings";
-import { checkVrm, modelName, NAME_MAX, Refused } from "./vrm-file";
+import { checkVrm, checkVrma, modelName, NAME_MAX, Refused } from "./vrm-file";
 
 /** The largest model taken, in bytes. VRoid's exports are usually 10 to 30 MB. */
 export const UPLOAD_MAX = 64 * 1024 * 1024;
+/** The largest gesture clip taken: a VRM Animation of a few seconds is tens or hundreds of kilobytes. */
+export const CLIP_MAX = 4 * 1024 * 1024;
 /** The largest portrait taken: a 256-pixel PNG is far smaller. */
 const PORTRAIT_MAX = 1024 * 1024;
 /** The longest stamp a portrait is kept with: what it was drawn with (`portraitStamp` in stage.ts). */
@@ -37,9 +40,18 @@ const STALE_MS = 60_000;
  *   PATCH  /models/:id           { name }: a new name, 1 to 80 characters
  *   PUT    /models/:id/settings  { settings }: what is set on the model (model-settings.ts), checked, in place of what
  *                                was; {} is every default
- *   DELETE /models/:id           the model, its picture and what is kept of it
+ *   PUT    /models/:id/clips/:gesture?name=<file>
+ *                                a VRM Animation (.vrma) as the body, at most 4 MiB, checked (vrm-file.ts): the clip
+ *                                played for that gesture (`greeting` or `thinking`, gestures.ts) in place of its own,
+ *                                listed in the model's `clips` by the file's name, size and sha256; { model }
+ *   GET    /models/:id/clips/:gesture
+ *                                that clip's file, cached for good: the page asks for it by its sha256 (`?v=`)
+ *   DELETE /models/:id/clips/:gesture
+ *                                the clip, so the gesture is its own again; { model }
+ *   DELETE /models/:id           the model, its picture, its clips and what is kept of it
  *
- * Each model is three files: `<id>.vrm`, `<id>.json` (the Model, what `GET /models` lists) and `<id>.png`. What is
+ * Each model is three files, and one more for each clip: `<id>.vrm`, `<id>.json` (the Model, what `GET /models`
+ * lists), `<id>.png` and `<id>.<gesture>.vrma`. What is
  * written goes to a `.part` file first and is renamed into place whole. A refusal is JSON, `{ error, code, detail? }`:
  * `error` in English, `code` what the page says it in its own words by.
  */
@@ -177,11 +189,56 @@ export default function flairAvatar(portal: ServerPortal) {
     res.json({ model: keep({ ...model, settings }) });
   });
 
+  // The gesture a clip's route names, or a 404 for one that is not a gesture a clip is played for.
+  const gesture = (req: Request, res: Response): ClipGesture | undefined => {
+    const given = String(req.params.gesture);
+    if (CLIP_GESTURES.includes(given as ClipGesture)) return given as ClipGesture;
+    refuse(res, 404, "not-found", "There is no such gesture");
+  };
+
+  router.put("/models/:id/clips/:gesture", async (req, res) => {
+    const model = named(req, res);
+    const of = model && gesture(req, res);
+    if (!model || !of) return;
+    const chunks: Buffer[] = [];
+    if (!(await readBody(req, CLIP_MAX, (chunk) => chunks.push(chunk)))) return tooLarge(res, "The clip is larger than 4 MiB");
+    const file = Buffer.concat(chunks);
+    try {
+      checkVrma((position, length) => file.subarray(position, position + length), file.length);
+    } catch (e) {
+      if (e instanceof Refused) return refuse(res, 400, e.code, e.message, e.detail);
+      throw e;
+    }
+    // Read again now that the body is in, as for a portrait.
+    const now = kept(model.id);
+    if (!now) return refuse(res, 404, "not-found", "There is no such model");
+    put(where(model.id, `${of}.vrma`), file);
+    const name = [...(fileName(req) ?? `${of}.vrma`)].slice(0, NAME_MAX).join("");
+    const sha256 = createHash("sha256").update(file).digest("hex");
+    res.json({ model: keep({ ...now, clips: { ...now.clips, [of]: { name, size: file.length, sha256 } } }) });
+  });
+
+  router.get("/models/:id/clips/:gesture", (req, res) => {
+    const of = gesture(req, res);
+    if (of) send(req, res, `${of}.vrma`, { mimeType: "model/gltf-binary", cache: "private, max-age=31536000, immutable" });
+  });
+
+  router.delete("/models/:id/clips/:gesture", (req, res) => {
+    const model = named(req, res);
+    const of = model && gesture(req, res);
+    if (!model || !of) return;
+    const { [of]: _gone, ...clips } = model.clips ?? {};
+    // What lists it first, as for a model.
+    const left = keep({ ...model, clips });
+    rmSync(where(model.id, `${of}.vrma`), { force: true });
+    res.json({ model: left });
+  });
+
   router.delete("/models/:id", (req, res) => {
     const model = named(req, res);
     if (!model) return;
     // What lists it first, so a model is never listed without its file.
-    for (const ext of ["json", "vrm", "png"]) rmSync(where(model.id, ext), { force: true });
+    for (const ext of ["json", "vrm", "png", ...CLIP_GESTURES.map((of) => `${of}.vrma`)]) rmSync(where(model.id, ext), { force: true });
     res.json({ ok: true });
   });
 }

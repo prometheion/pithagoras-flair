@@ -2,9 +2,12 @@ import { AmbientLight, Color, DirectionalLight, PerspectiveCamera, Scene, Textur
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM, type VRMLookAtBoneApplier, type VRMLookAtExpressionApplier } from "@pixiv/three-vrm";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
-import type { Model } from "./model";
+import { loadClip, playClip, unpose, type Clip } from "./clips";
+import { damp } from "./ease";
+import { BONES, type ClipGesture } from "./gestures";
+import type { ClipFile, Model } from "./model";
 import { withDefaults, type ModelSettings } from "./model-settings";
-import { createMotion, damp, type Bone, type Pose } from "./motion";
+import { createMotion, type Bone, type Pose } from "./motion";
 import { portal } from "./portal";
 
 /**
@@ -30,6 +33,9 @@ export const DRAW_VERSION = 1;
  * settings that show in it, framing, lights and the arms at rest. A string to compare, that says what it was made with.
  */
 export const portraitStamp = ({ zoom, height, brightness, warmth, armDown }: ModelSettings) => `${DRAW_VERSION}:${JSON.stringify([zoom, height, brightness, warmth, armDown])}`;
+
+/** A gesture the Settings page's Try asks for: a new object for each press, so the same gesture can be asked again. */
+export type Cue = { gesture: ClipGesture };
 
 /** The canvas is larger than the box by 3/14 of the box on each side, as the orb's is, so the model is not cut at its edge. */
 const OVERSCAN = 10 / 7;
@@ -169,7 +175,7 @@ export function pose(vrm: VRM, { expressions, bones }: Pose) {
  * head bone then.
  */
 export function rest(vrm: VRM, settings: ModelSettings): number {
-  pose(vrm, createMotion(() => 0.5).step({ mode: "idle", output: 0, dt: 0, reduced: true, settings }));
+  pose(vrm, createMotion(() => 0.5).step({ mode: "idle", input: 0, output: 0, dt: 0, reduced: true, settings, clips: {} }));
   vrm.update(0);
   vrm.scene.updateMatrixWorld(true);
   return vrm.humanoid.getRawBoneNode("head")!.getWorldPosition(new Vector3()).y;
@@ -192,12 +198,19 @@ function look(camera: PerspectiveCamera, { y, z, at }: Framing) {
  * new zoom or height is eased to as the change of framing is, and the lights and the motion follow at once. `framing`,
  * where it says one, is drawn whatever the size (the Settings page's preview shows either). `shown` is told what is
  * shown as it changes.
+ *
+ * `clips`, the model's gesture clips as its record lists them, is read in each frame too: a clip uploaded or removed
+ * on the Settings page is fetched, or dropped, while the model is drawn, and until a clip is in (or when it cannot be
+ * read) the gesture is the motion's own. `cue` is a gesture the Settings page's Try asks for, made once for each new
+ * one it gives.
  */
-export function createStage(host: HTMLElement, { model, levels, mode, settings, framing: kindOf, shown }: {
+export function createStage(host: HTMLElement, { model, levels, mode, settings, clips: clipsOf, cue: cueOf, framing: kindOf, shown }: {
   model: Model;
   levels: { readonly current: AvatarLevels };
   mode: () => AvatarMode;
   settings: () => ModelSettings;
+  clips: () => Model["clips"];
+  cue?: () => Cue | undefined;
   framing?: () => FramingKind | undefined;
   shown: (shown: Shown) => void;
 }): () => void {
@@ -233,6 +246,47 @@ export function createStage(host: HTMLElement, { model, levels, mode, settings, 
   let framing: Framing | undefined;
   let last = 0;
   let seen = true;
+  // The clips read for the model, each with the file it was read from, their lengths as the motion is told them, the
+  // list last looked at and the files it asked for (to see a change by), and what fetches them.
+  const clips = new Map<ClipGesture, { sha256: string; clip: Clip }>();
+  let lengths: Partial<Record<ClipGesture, number>> = {};
+  let looked: Model["clips"];
+  let asked = "";
+  let fetching = new AbortController();
+  let cued: Cue | undefined;
+  const measure = () => {
+    lengths = Object.fromEntries([...clips].map(([gesture, { clip }]) => [gesture, clip.duration]));
+  };
+  // What the record lists now, against what is read: one gone or replaced is dropped at once, and one new is fetched.
+  const follow = (listed: Model["clips"], drawn: VRM) => {
+    // The same list as in the last frame, most frames: a list read again is a new one, which may ask for the same.
+    if (listed === looked) return;
+    looked = listed;
+    const key = JSON.stringify(listed ?? {});
+    if (key === asked) return;
+    asked = key;
+    fetching.abort();
+    fetching = new AbortController();
+    const signal = fetching.signal;
+    for (const [gesture, read] of clips) {
+      if (listed?.[gesture]?.sha256 !== read.sha256) {
+        unpose(read.clip);
+        clips.delete(gesture);
+      }
+    }
+    measure();
+    for (const [gesture, file] of Object.entries(listed ?? {}) as [ClipGesture, ClipFile][]) {
+      if (clips.has(gesture)) continue;
+      loadClip(portal.api.url(`/models/${model.id}/clips/${gesture}?v=${file.sha256}`), drawn, BONES, signal).then(
+        (clip) => {
+          if (signal.aborted) return;
+          clips.set(gesture, { sha256: file.sha256, clip });
+          measure();
+        },
+        (e) => signal.aborted || console.warn(`3D Avatar: the ${gesture} clip of ${model.name} could not be played, so its own gesture is made`, e),
+      );
+    }
+  };
 
   const frame = (time: number) => {
     // Kept under the rate for its size: a frame of the display's is let go until it is time.
@@ -257,9 +311,16 @@ export function createStage(host: HTMLElement, { model, levels, mode, settings, 
     // Hair and clothes would jump after a pause (the box out of view): they start again from where they hang.
     if (gap > 500) vrm.springBoneManager?.reset();
     light(sun, ambient, set);
-    const moved = motion.step({ mode: mode(), output: levels.current.output, dt, reduced, settings: set });
+    follow(clipsOf(), vrm);
+    const asking = cueOf?.();
+    const cue = asking !== cued ? asking?.gesture : undefined;
+    cued = asking;
+    const { input, output } = levels.current;
+    const moved = motion.step({ mode: mode(), input, output, dt, reduced, settings: set, clips: lengths, cue });
     look(camera, { ...framing, z: framing.z * (1 - moved.near) });
+    for (const { clip } of clips.values()) unpose(clip);
     pose(vrm, moved);
+    if (moved.clip) playClip(clips.get(moved.clip.gesture)!.clip, moved.clip.time, moved.clip.weight);
     aim(vrm, camera, moved.gaze);
     vrm.update(dt);
     renderer.render(scene, camera);
@@ -303,6 +364,7 @@ export function createStage(host: HTMLElement, { model, levels, mode, settings, 
   return () => {
     canvas.removeEventListener("webglcontextlost", lost);
     loading.abort();
+    fetching.abort();
     renderer.setAnimationLoop(null);
     resized.disconnect();
     visible.disconnect();

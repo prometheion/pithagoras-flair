@@ -1,10 +1,14 @@
 import type { AvatarMode } from "@pithagoras/extension-api";
+import { damp } from "./ease";
+import { createGestures, type Bones, type ClipGesture, type ClipPlay, type GestureBone } from "./gestures";
 import type { ModelSettings } from "./model-settings";
+import { createMouth, type MouthShapes } from "./mouth";
 
 /**
- * How the avatar moves, from what voice mode is doing and how loud the reply is: a pure step, called once a frame
- * with the time since the last, that says how open the mouth is, how far the eyes are shut, the angle of each bone it
- * moves and where the eyes look. No three.js in here, so it is tested on its own.
+ * How the avatar moves, from what voice mode is doing and how loud each side is: a pure step, called once a frame
+ * with the time since the last, that says the mouth's shape (mouth.ts), how far the eyes are shut, the angle of each
+ * bone it moves, where the eyes look, and the gesture clip to play over it (gestures.ts). No three.js in here, so it is
+ * tested on its own.
  *
  * Every change is made over time, not per frame (`damp`), so the avatar moves the same at 15, 30 or 60 frames a
  * second. Angles are radians on three-vrm's normalized bones, as on a VRM 1.0 model (the stage reverses x and z for a
@@ -12,31 +16,36 @@ import type { ModelSettings } from "./model-settings";
  * left (the viewer's right), z rolls it.
  *
  * What is set on the model (model-settings.ts) scales each movement, and is read in every step, so a change shows in
- * the next frame. With the defaults every number is what it was before there were settings.
+ * the next frame.
  */
 
 /** The bones it moves. Only hips, spine, head and the limbs are bones every VRM model has: the stage skips one a model lacks. */
-export type Bone = "spine" | "chest" | "neck" | "head" | "leftUpperArm" | "rightUpperArm" | "leftLowerArm" | "rightLowerArm";
+export type Bone = GestureBone;
 
 export interface MotionInput {
   mode: AvatarMode;
-  /** How loud the reply played now is, 0 to 1. */
+  /** How loud the person is heard and the reply played now, 0 to 1 each. */
+  input: number;
   output: number;
   /** Seconds since the last step. */
   dt: number;
   /**
    * The system asks for less motion. It comes before the settings: what it stops stays stopped, and what it halves is
    * at half or less whatever is set, so the settings can lower what it allows, never raise it. Blinking and the mouth,
-   * which do not move the body, follow their settings either way.
+   * which do not move the body, follow their settings either way. It stops every gesture.
    */
   reduced: boolean;
   settings: ModelSettings;
+  /** The gesture clips the model has, each by its length in seconds (gestures.ts). */
+  clips: Partial<Record<ClipGesture, number>>;
+  /** A gesture to make now, whatever the mode: the Settings page's Try. */
+  cue?: ClipGesture;
 }
 
 export interface Pose {
-  /** The VRM expressions it sets, 0 to 1: the mouth open (`aa`) and rounded (`oh`), and the eyes shut (`blink`). */
-  expressions: { aa: number; oh: number; blink: number };
-  bones: Record<Bone, [number, number, number]>;
+  /** The VRM expressions it sets, 0 to 1: the mouth's five shapes (mouth.ts), and the eyes shut (`blink`). */
+  expressions: MouthShapes & { blink: number };
+  bones: Bones;
   /**
    * How much nearer the camera is drawn, as a share of its distance: the lean in, which seen from straight in front
    * barely shows in the bones alone (the face 1% larger).
@@ -47,10 +56,9 @@ export interface Pose {
    * turn that way (1 is their furthest; the stage turns it into the model's own angles).
    */
   gaze: [number, number];
+  /** The gesture clip to play over the bones, from a time in it and by a weight; none when no clip is played. */
+  clip?: ClipPlay;
 }
-
-/** `a` moved towards `b` at `lambda` per second for `dt` seconds: the same path whatever the steps. */
-export const damp = (a: number, b: number, lambda: number, dt: number) => a + (b - a) * (1 - Math.exp(-lambda * dt));
 
 /**
  * How long the agent has to be thinking before the head takes the thinking pose. Between two phrases of one reply
@@ -62,10 +70,12 @@ export const THINK_AFTER = 0.6;
 export const BLINK = 0.15;
 
 export function createMotion(random: () => number = Math.random) {
+  const mouth = createMouth(random);
+  const gestures = createGestures(random);
   // Seconds since it started, and what is eased towards its target from frame to frame.
   let t = 0;
-  let mouth = 0;
   let voice = 0;
+  let follow = 0;
   let lean = 0;
   let think = 0;
   // How long the mode has been thinking, 0 for any other.
@@ -84,7 +94,7 @@ export function createMotion(random: () => number = Math.random) {
   let wandering = false;
 
   return {
-    step({ mode, output, dt, reduced, settings }: MotionInput): Pose {
+    step({ mode, input, output, dt, reduced, settings, clips, cue }: MotionInput): Pose {
       t += dt;
 
       blinkClock += dt * settings.blinkRate;
@@ -117,9 +127,10 @@ export function createMotion(random: () => number = Math.random) {
       lean = damp(lean, mode === "input" ? 1 : 0, 4, dt);
 
       // Opens fast with the voice and closes more slowly, as a mouth does between syllables.
-      const open = mode === "output" ? Math.min(1, 1.6 * settings.mouth * output) : 0;
-      mouth = damp(mouth, open, open > mouth ? 40 : 13, dt);
+      const spoken = mouth.step({ speaking: mode === "output", output, dt, sensitivity: settings.mouth, shapes: settings.mouthShapes });
       voice = damp(voice, mode === "output" ? output : 0, 3, dt);
+      // The head turns a little with the eyes as they wander.
+      follow = damp(follow, wander ? 1 : 0, 2, dt);
 
       const since = (t - blinkAt) / BLINK;
       const blink = since >= 0 && since < 1 ? (since < 0.5 ? 2 * since : 2 - 2 * since) : 0;
@@ -136,22 +147,31 @@ export function createMotion(random: () => number = Math.random) {
       const scaled = (factor: number) => (reduced ? 0.5 * Math.min(1, factor) : factor);
       const leaning = lean * scaled(motion * settings.lean);
       const pose = think * scaled(motion);
+      const amount = reduced ? 0 : motion * settings.gestures;
+
+      const bones: Bones = {
+        spine: [0.02 * breath + 0.08 * leaning, 0, 0],
+        chest: [0.015 * breath, 0, 0],
+        neck: [0.06 * leaning, 0, 0],
+        head: [swayX + nod - 0.05 * pose - 0.1 * amount * follow * look[1], swayY + 0.12 * pose + 0.25 * amount * follow * look[0], 0.12 * pose],
+        leftShoulder: [0, 0, 0],
+        rightShoulder: [0, 0, 0],
+        // A VRM model's rest pose is a T-pose: the arms down by the angle set, and breathing with the chest.
+        leftUpperArm: [0, 0, -settings.armDown + 0.02 * breath],
+        rightUpperArm: [0, 0, settings.armDown - 0.02 * breath],
+        leftLowerArm: [0, 0, -0.15],
+        rightLowerArm: [0, 0, 0.15],
+        leftHand: [0, 0, 0],
+        rightHand: [0, 0, 0],
+      };
+      const clip = gestures.step({ mode, input, level: spoken.level, dt, t, thinking, amount, clips, cue }, bones);
 
       return {
-        expressions: { aa: mouth, oh: 0.25 * mouth, blink },
-        bones: {
-          spine: [0.02 * breath + 0.08 * leaning, 0, 0],
-          chest: [0.015 * breath, 0, 0],
-          neck: [0.06 * leaning, 0, 0],
-          head: [swayX + nod - 0.05 * pose, swayY + 0.12 * pose, 0.12 * pose],
-          // A VRM model's rest pose is a T-pose: the arms down by the angle set, and breathing with the chest.
-          leftUpperArm: [0, 0, -settings.armDown + 0.02 * breath],
-          rightUpperArm: [0, 0, settings.armDown - 0.02 * breath],
-          leftLowerArm: [0, 0, -0.15],
-          rightLowerArm: [0, 0, 0.15],
-        },
+        expressions: { ...spoken.expressions, blink },
+        bones,
         near: 0.08 * leaning,
         gaze: [look[0] + 0.7 * pose, look[1] + 0.5 * pose],
+        clip,
       };
     },
   };

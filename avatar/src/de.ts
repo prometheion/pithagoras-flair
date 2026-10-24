@@ -12,18 +12,22 @@ export const de: Record<string, string> = {
   "Add a VRM file to give an agent a 3D character in voice mode.":
     "Füge eine VRM-Datei hinzu, um einem Agenten im Sprachmodus eine 3D-Figur zu geben.",
   "Added {name}.": "{name} hinzugefügt.",
-  "All of its own movement: breathing, sway, eye movement, nodding, leaning in and the thinking pose. It blinks and speaks either way.":
-    "Alle eigenen Bewegungen: Atmen, Wiegen, Augenbewegungen, Nicken, Vorbeugen und die Denkpose. Blinzeln und Sprechen bleiben in jedem Fall.",
+  "A VRM Animation file (.vrma) uploaded here plays in place of the built-in gesture. Try shows it in the preview.":
+    "Eine hier hochgeladene VRM-Animationsdatei (.vrma) wird statt der eingebauten Geste abgespielt. Ausprobieren zeigt sie in der Vorschau.",
+  "All of its own movement: breathing, sway, eye movement, nodding, leaning in, thinking pose, gestures. It blinks and speaks either way.":
+    "Alle eigenen Bewegungen: Atmen, Wiegen, Augenbewegungen, Nicken, Vorbeugen, Denkpose, Gesten. Blinzeln und Sprechen bleiben in jedem Fall.",
   "Allowed": "Erlaubt",
   "Arm angle": "Armwinkel",
   "Arms": "Arme",
   "Around": "Umher",
+  "As voice mode starts.": "Wenn der Sprachmodus beginnt.",
   "At you": "Auf dich",
   "Authors": "Autoren",
   "Back to the defaults.": "Auf Standard zurückgesetzt.",
   "Blinking": "Blinzeln",
   "Breathing and sway": "Atmen und Wiegen",
   "Brightness": "Helligkeit",
+  "Built in.": "Eingebaut.",
   "Bust": "Brustbild",
   "By pixiv. VRM 1.0, 10 MB. VRM Public License 1.0: commercial use allowed, no credit needed, may be passed on.":
     "Von pixiv. VRM 1.0, 10 MB. VRM Public License 1.0: kommerzielle Nutzung erlaubt, keine Namensnennung nötig, darf weitergegeben werden.",
@@ -54,6 +58,11 @@ export const de: Record<string, string> = {
   "Framing": "Ausschnitt",
   "Free models to start with": "Kostenlose Modelle für den Anfang",
   "Gaze": "Blick",
+  "Gesture clips": "Gestenclips",
+  "Gestures": "Gesten",
+  "Hand to the chin": "Hand ans Kinn",
+  "Hands and head on stressed words, nods as you talk, the wave, the hand to the chin, shifts of weight.":
+    "Hände und Kopf bei betonten Wörtern, Nicken, während du sprichst, Winken, Hand ans Kinn, Gewichtsverlagerung.",
   "Height": "Höhe",
   "How close the camera is.": "Wie nah die Kamera ist.",
   "How far it leans towards you while you talk.": "Wie weit es sich zu dir beugt, während du sprichst.",
@@ -82,6 +91,7 @@ export const de: Record<string, string> = {
   "Models": "Modelle",
   "Motion": "Bewegung",
   "Mouth sensitivity": "Empfindlichkeit des Munds",
+  "Mouth shapes": "Mundformen",
   "Moves the model up or down in its box.": "Schiebt das Modell in seinem Feld nach oben oder unten.",
   "Muted": "Stumm",
   "Neutral": "Neutral",
@@ -105,14 +115,21 @@ export const de: Record<string, string> = {
   "Redistribution": "Weitergabe",
   "Redistribution allowed": "Weitergabe erlaubt",
   "Redistribution not stated": "Weitergabe nicht angegeben",
+  "Remove": "Entfernen",
   "Rename": "Umbenennen",
+  "Replace": "Ersetzen",
   "Required": "Erforderlich",
   "Reset {group}": "{group} zurücksetzen",
+  "Shapes its mouth for a vowel on each syllable, guessed from how loud the voice is. Off, it only opens and shuts.":
+    "Formt den Mund bei jeder Silbe zu einem Vokal, geschätzt aus der Lautstärke der Stimme. Aus, öffnet und schließt er sich nur.",
   "Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.":
     "Wird beim Ändern gespeichert, für dieses Modell überall, wo es gezeigt wird: hier, im Sprachmodus und im Avatar-Dialog jedes Agenten.",
   "Speaking": "Spricht",
   "Stop": "Stopp",
   "Talk": "Probegespräch",
+  "The clip is larger than 4 MB.": "Der Clip ist größer als 4 MB.",
+  "The clip loads parts of itself from outside its file, which this extension does not allow.":
+    "Der Clip lädt Teile von sich von außerhalb seiner Datei, was diese Erweiterung nicht erlaubt.",
   "The colour of the light, from cool to warm.": "Die Farbe des Lichts, von kühl bis warm.",
   "The model has no {bone} bone, which an avatar needs.": "Dem Modell fehlt der Knochen {bone}, den ein Avatar braucht.",
   "The model is compressed in a way this extension cannot read ({name}).":
@@ -123,12 +140,15 @@ export const de: Record<string, string> = {
   "The name must be 1 to 80 characters.": "Der Name muss 1 bis 80 Zeichen lang sein.",
   "Thinking": "Denkt nach",
   "Thinking pose": "Denkpose",
+  "This is not a VRM Animation file.": "Das ist keine VRM-Animationsdatei.",
   "This is not a VRM file.": "Das ist keine VRM-Datei.",
   "This model could not be drawn. Voice mode shows the orb for it.":
     "Dieses Modell konnte nicht gezeigt werden. Der Sprachmodus zeigt dafür den Orb.",
   "Tilts its head and looks away while the agent works on its answer.":
     "Neigt den Kopf und schaut weg, während der Agent an seiner Antwort arbeitet.",
+  "Try": "Ausprobieren",
   "Undo": "Rückgängig",
+  "Upload": "Hochladen",
   "Uploading {name}…": "{name} wird hochgeladen…",
   "Use as an avatar": "Nutzung als Avatar",
   "Voice": "Stimme",
@@ -136,13 +156,15 @@ export const de: Record<string, string> = {
     "VRM-Dateien (.vrm). Wähle eine für einen Agenten in seinem Avatar-Dialog: Öffne auf der Seite Agenten den Agenten und nutze die Palette an seinem Avatar.",
   "VRM {spec} · {size} MB": "VRM {spec} · {size} MB",
   "Warmer {n}": "Wärmer {n}",
+  "Wave": "Winken",
   "Warmth": "Wärme",
+  "When the agent thinks for more than a moment.": "Wenn der Agent länger als einen Moment nachdenkt.",
   "WebGL 2 is not available in this browser, so voice mode shows the orb.":
     "WebGL 2 ist in diesem Browser nicht verfügbar, darum zeigt der Sprachmodus den Orb.",
   "What the model says of its own licence. It is the author's, not this extension's.":
     "Was das Modell über seine eigene Lizenz sagt. Sie ist die des Autors, nicht die dieser Erweiterung.",
-  "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.":
-    "Dein System verlangt weniger Bewegung: Atmen, Wiegen und Augenbewegungen bleiben aus, Vorbeugen und Denkpose sind höchstens halb so stark, was immer hier eingestellt ist.",
+  "Your system asks for less motion: breathing, sway, eye movement and gestures stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.":
+    "Dein System verlangt weniger Bewegung: Atmen, Wiegen, Augenbewegungen und Gesten bleiben aus, Vorbeugen und Denkpose sind höchstens halb so stark, was immer hier eingestellt ist.",
   "Zoom": "Zoom",
   "{file}: {reason}": "{file}: {reason}",
 };

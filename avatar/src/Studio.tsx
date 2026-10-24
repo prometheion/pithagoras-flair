@@ -1,11 +1,12 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
 import { Avatar } from "./Avatar";
+import { CLIP_GESTURES, type ClipGesture } from "./gestures";
 import { Licence } from "./Licence";
 import type { Model } from "./model";
 import { changed, DEFAULT_SETTINGS, RANGES, withDefaults, type Gaze, type ModelSettings, type NumberKey } from "./model-settings";
 import { msg, portal, t } from "./portal";
-import type { FramingKind, Shown } from "./stage";
+import type { Cue, FramingKind, Shown } from "./stage";
 import { NAME_MAX } from "./vrm-file";
 
 /**
@@ -31,6 +32,10 @@ import { NAME_MAX } from "./vrm-file";
  * has its own Reset, which puts back the defaults of what is in that tab and nothing else, saved at once too; it can
  * be undone until something else is changed: what the tab had before it is kept for that, here, while the model is
  * the one chosen, and Undo is offered on that tab.
+ *
+ * The model's gesture clips, the wave and the hand to the chin, are uploaded and removed in the Arms tab, each saved
+ * at once (they are files, not settings: the tab's Reset leaves them), and Try makes a gesture in the preview, with its
+ * clip or without.
  */
 
 /** The preview's states, in the words of the portal's own Avatar dialog. */
@@ -55,15 +60,17 @@ const GROUPS: [Group, string][] = [
 
 /**
  * Every setting by the group it is in: what a tab's Reset puts back, and what its dot says differs from the defaults.
- * Each setting is in one group: the sliders below, the thinking pose with the motion, and the gaze with the eyes.
+ * Each setting is in one group: the sliders below, the thinking pose with the motion, the gaze with the eyes, and the
+ * mouth's shapes with the voice. The gestures are with the arms, which make most of them, beside their clips: the
+ * Motion tab has as much as its panel holds on a laptop's screen.
  */
 const KEYS: Record<Group, (keyof ModelSettings)[]> = {
   camera: ["zoom", "height"],
   light: ["brightness", "warmth"],
   motion: ["motion", "breathing", "lean", "thinkingPose"],
   eyes: ["gaze", "blinkRate"],
-  voice: ["mouth"],
-  arms: ["armDown"],
+  voice: ["mouth", "mouthShapes"],
+  arms: ["armDown", "gestures"],
 };
 
 /** Whether any setting of the group differs from its default. */
@@ -78,13 +85,20 @@ const SLIDERS: [Group, NumberKey, string, string][] = [
   ["camera", "height", msg("Height"), msg("Moves the model up or down in its box.")],
   ["light", "brightness", msg("Brightness"), msg("How strongly the light falls on it.")],
   ["light", "warmth", msg("Warmth"), msg("The colour of the light, from cool to warm.")],
-  ["motion", "motion", msg("Overall motion"), msg("All of its own movement: breathing, sway, eye movement, nodding, leaning in and the thinking pose. It blinks and speaks either way.")],
+  ["motion", "motion", msg("Overall motion"), msg("All of its own movement: breathing, sway, eye movement, nodding, leaning in, thinking pose, gestures. It blinks and speaks either way.")],
   ["motion", "breathing", msg("Breathing and sway"), msg("How much its chest rises and its head sways while it waits.")],
   ["motion", "lean", msg("Leaning in"), msg("How far it leans towards you while you talk.")],
   ["eyes", "blinkRate", msg("Blinking"), msg("How often it blinks.")],
   ["voice", "mouth", msg("Mouth sensitivity"), msg("How wide the mouth opens at the same loudness. Raise it for a quiet voice.")],
   ["arms", "armDown", msg("Arm angle"), msg("How far the arms come down from the T-pose. Change it when the arms go into the body or stand out stiffly.")],
+  ["arms", "gestures", msg("Gestures"), msg("Hands and head on stressed words, nods as you talk, the wave, the hand to the chin, shifts of weight.")],
 ];
+
+/** The gestures a clip can be uploaded for, each with its name and when it is made. */
+const CLIPS: Record<ClipGesture, [string, string]> = {
+  greeting: [msg("Wave"), msg("As voice mode starts.")],
+  thinking: [msg("Hand to the chin"), msg("When the agent thinks for more than a moment.")],
+};
 
 const GAZE: [Gaze, string, string][] = [
   ["you", msg("At you"), msg("Its eyes stay on you, moving a little now and then.")],
@@ -169,7 +183,7 @@ const UNDO = icon(<path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3" />);
 const PLAY = icon(<path d="M8 5v14l11-7z" />);
 const STOP = icon(<path d="M7 7h10v10H7z" />);
 
-export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave, previewRef }: {
+export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave, onClip, onRemoveClip, previewRef }: {
   model: Model;
   /** The tab shown, which the page keeps as another model is chosen. */
   tab: Group;
@@ -180,6 +194,9 @@ export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave,
   onSave: (settings: Partial<ModelSettings>) => Promise<boolean>;
   /** Sends a change still waiting to be saved as the page is closed. */
   onLeave: (settings: Partial<ModelSettings>) => void;
+  /** Uploads a clip for a gesture, or removes the one it has: the page says it when that is refused. */
+  onClip: (gesture: ClipGesture, file: File) => void;
+  onRemoveClip: (gesture: ClipGesture) => void;
   /** The preview with its controls, for the page to bring into view when a model is chosen. */
   previewRef?: Ref<HTMLDivElement>;
 }) {
@@ -193,6 +210,8 @@ export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave,
   const sending = useRef(false);
   // The tab a Reset was pressed on and what that tab had before it, for Undo, until any other change.
   const [undo, setUndo] = useState<{ group: Group; values: Partial<ModelSettings> }>();
+  // The gesture Try last asked the preview for.
+  const [cue, setCue] = useState<Cue>();
 
   const save = async (next: ModelSettings) => {
     setPending(next);
@@ -252,7 +271,7 @@ export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave,
             card as well, so it is where it was until it is held. */}
         <div ref={previewRef} className="sticky -top-4 z-10 -mt-4 bg-surface [@container(min-width:36rem)]:self-start">
           <div className="bg-raised/40 pb-3 pt-4">
-            <Preview model={model} settings={drawn} />
+            <Preview model={model} settings={drawn} cue={cue} />
           </div>
         </div>
         <div className="min-w-0">
@@ -270,6 +289,10 @@ export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave,
               setUndo({ group: tab, values: pick(drawn, tab) });
             }}
             onUndo={undo?.group === tab ? () => void save({ ...drawn, ...undo.values }) : undefined}
+            clips={model.clips}
+            onClip={onClip}
+            onRemoveClip={onRemoveClip}
+            onTry={(gesture) => setCue({ gesture })}
           />
         </div>
       </div>
@@ -373,13 +396,13 @@ function NameField({ value, onFinish }: { value: string; onFinish: (name: string
  * middle of its stage or the face it draws in a small box (chosen on the square's corner, as a camera's), in a state
  * chosen under it, with the dialog's made-up voice (syllables rising and falling inside slower phrases) while it
  * listens or speaks. Talk, beside the states it plays through, plays a whole turn. What is drawn while the model is not
- * says why: still loading, a model that cannot be drawn, or a browser without WebGL 2.
+ * says why: still loading, a model that cannot be drawn, or a browser without WebGL 2. `cue` is a gesture Try asks for.
  *
  * The square's side is the designer's `--stage` (see Studio): its height a share of the screen's small viewport (svh),
  * which does not change as a phone's address bar comes and goes, so the model is not drawn at a new size as the page
  * scrolls. The five states are one row of equal cells, small enough for German on a phone, as in the Avatar dialog.
  */
-function Preview({ model, settings }: { model: Model; settings: ModelSettings }) {
+function Preview({ model, settings, cue }: { model: Model; settings: ModelSettings; cue?: Cue }) {
   const { ui } = portal;
   const [chosen, setChosen] = useState<AvatarMode>("output");
   // The step of the turn Talk plays, while it plays.
@@ -425,6 +448,7 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
             levels={levels}
             settings={settings}
             framing={framing}
+            cue={cue}
             onShown={setShownNow}
             orb={<p aria-hidden="true" className="absolute inset-0 grid place-items-center text-center text-xs text-[#acc9ee]">{why}</p>}
           />
@@ -476,7 +500,7 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
 
 /**
  * What can be set on the model, in tabs as the portal's own are (the Avatar dialog's): the camera, the light, how it
- * moves, its eyes, its voice and its arms. The arrow keys go from tab to tab (round the ends), Home and End to the
+ * moves, its eyes, its voice, and its arms with the gestures and their clips. The arrow keys go from tab to tab (round the ends), Home and End to the
  * first and the last, and a tab is shown as it is reached; Tab passes the row in one stop, on the tab shown. A tab
  * where anything differs from the defaults has a dot, which says so to a screen reader too, and a value that differs
  * is shown in the accent colour.
@@ -490,7 +514,7 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
  * changed. The labels of `ui.Segments` are passed translated: it says them
  * through the portal's own texts, which do not have the extension's.
  */
-function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUndo }: {
+function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUndo, clips, onClip, onRemoveClip, onTry }: {
   settings: ModelSettings;
   tab: Group;
   onTab: (tab: Group) => void;
@@ -501,6 +525,10 @@ function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUnd
   onReset: () => void;
   /** Puts back what the tab shown had before its Reset, while that can be done. */
   onUndo?: () => void;
+  clips: Model["clips"];
+  onClip: (gesture: ClipGesture, file: File) => void;
+  onRemoveClip: (gesture: ClipGesture) => void;
+  onTry: (gesture: ClipGesture) => void;
 }) {
   const { ui } = portal;
   const ids = useId();
@@ -574,7 +602,7 @@ function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUnd
         >
           {tab === "motion" && reduced && (
             <p className="text-[11px] text-fg-faint">
-              {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
+              {t("Your system asks for less motion: breathing, sway, eye movement and gestures stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
             </p>
           )}
           {tab === "eyes" && (
@@ -596,6 +624,30 @@ function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUnd
               <ui.Switch on={settings.thinkingPose} label={t("Thinking pose")} onChange={(on) => onSet({ thinkingPose: on })} />
             </div>
           )}
+          {tab === "voice" && (
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1 text-xs text-fg-muted">
+                {t("Mouth shapes")}
+                <span className="mt-0.5 block text-[11px] text-fg-faint">
+                  {t("Shapes its mouth for a vowel on each syllable, guessed from how loud the voice is. Off, it only opens and shuts.")}
+                </span>
+              </div>
+              <ui.Switch on={settings.mouthShapes} label={t("Mouth shapes")} onChange={(on) => onSet({ mouthShapes: on })} />
+            </div>
+          )}
+          {tab === "arms" && (
+            <div>
+              <p className="text-xs text-fg-muted">{t("Gesture clips")}</p>
+              <p className="mt-0.5 text-[11px] text-fg-faint">
+                {t("A VRM Animation file (.vrma) uploaded here plays in place of the built-in gesture. Try shows it in the preview.")}
+              </p>
+              <div className="mt-2 space-y-2">
+                {CLIP_GESTURES.map((gesture) => (
+                  <ClipRow key={gesture} gesture={gesture} file={clips?.[gesture]} onClip={onClip} onRemove={onRemoveClip} onTry={onTry} />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-line pt-2">
           <p role="status" className="min-w-0 text-[11px] text-fg-faint">{onUndo ? t("Back to the defaults.") : ""}</p>
@@ -607,6 +659,57 @@ function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUnd
         </div>
       </div>
       <p className="mt-2 text-[11px] text-fg-faint">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
+    </div>
+  );
+}
+
+/**
+ * A gesture's clip: its name and when it is made, the clip's file name or that the gesture is its own, and Try, Upload
+ * (Replace once there is one) and Remove. A file is uploaded as it is picked; the page says it when it is refused.
+ */
+function ClipRow({ gesture, file, onClip, onRemove, onTry }: {
+  gesture: ClipGesture;
+  file?: NonNullable<Model["clips"]>[ClipGesture];
+  onClip: (gesture: ClipGesture, file: File) => void;
+  onRemove: (gesture: ClipGesture) => void;
+  onTry: (gesture: ClipGesture) => void;
+}) {
+  const { ui } = portal;
+  const picker = useRef<HTMLInputElement>(null);
+  const [name, when] = CLIPS[gesture];
+  return (
+    <div role="group" aria-label={t(name)} data-clip={gesture} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <div className="min-w-0 flex-1 basis-40 text-xs text-fg-muted">
+        {t(name)}
+        <span className="mt-0.5 block truncate text-[11px] text-fg-faint" title={file?.name}>
+          {t(when)} {file ? file.name : t("Built in.")}
+        </span>
+      </div>
+      <div className="flex items-center gap-1">
+        <button type="button" className={ui.classes.ghost} onClick={() => onTry(gesture)}>
+          {t("Try")}
+        </button>
+        <button type="button" className={ui.classes.ghost} onClick={() => picker.current?.click()}>
+          {file ? t("Replace") : t("Upload")}
+        </button>
+        {file && (
+          <button type="button" className={ui.classes.ghost} onClick={() => onRemove(gesture)}>
+            {t("Remove")}
+          </button>
+        )}
+      </div>
+      <input
+        ref={picker}
+        type="file"
+        accept=".vrma"
+        hidden
+        data-testid={`flair-avatar-clip-${gesture}`}
+        onChange={(e) => {
+          const picked = e.target.files?.[0];
+          e.target.value = "";
+          if (picked) onClip(gesture, picked);
+        }}
+      />
     </div>
   );
 }
