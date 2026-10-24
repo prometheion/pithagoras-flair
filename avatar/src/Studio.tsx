@@ -10,20 +10,27 @@ import { NAME_MAX } from "./vrm-file";
 
 /**
  * The model chosen on the Settings page, as a card of its own: its name (renamed in place), its file to download, a
- * way to delete it, what its licence says, a large live preview, and what can be set on it beside the preview.
+ * way to delete it, what its licence says, a live preview, and what can be set on it beside the preview.
  *
- * The preview stays in view while what is set scrolls past it, so a change is seen as it is made. Where the card is
- * 36rem wide or more it is beside the settings, as wide as there is room for up to 36rem and 62% of the screen's
- * height, so it and its controls fit the Settings dialog; narrower, as on a phone or a tablet's narrow dialog, it is
- * over them, held at the top of the page as they scroll under it, a third of the screen's height. The card is a size
+ * The preview and what is set on the model are one designer, small enough to be seen whole in the Settings dialog of
+ * a laptop's screen (1280 by 800) once it is scrolled to, so a change is seen as it is made without the page moving.
+ * What is set is in tabs (Camera, Light, Motion, Eyes, Voice, Arms) over one panel, and the panel is as tall as the
+ * preview's square whichever tab is shown, scrolling inside where a tab has more than that: choosing a tab never
+ * changes the height of the page. The square's side (`--stage`) is set once for both. Where the card is 36rem wide
+ * or more the tabs are beside the preview, and the square is 42% of the card's width, at most 46% of the screen's
+ * height and at most 23rem, which is what the tallest tab needs: on a larger screen the designer is no taller.
+ * Narrower, as on a phone or a tablet's narrow dialog, the preview is over the tabs, and the square is the card's
+ * width up to 28% of the screen's height, so on a phone too the preview, the tabs and their panel are seen at once;
+ * on a shorter screen the preview is held at the top of the page as the tabs scroll under it. The card is a size
  * container for that: it is the card's width that counts, not the screen's, whatever the dialog has beside it.
  *
  * What is set is saved as it is changed: a slider when it is let go, a switch or a choice at once. The preview draws
  * a slider's value while it is still held, and the saved settings reach every avatar of the model wherever it is drawn
  * (models.ts). Saves go one at a time, the newest last, so the server keeps the last change whatever order two
- * answers would come in; a refused one is said over the page, and what is shown goes back to what is saved. Reset to
- * defaults is saved at once too, and can be undone until something else is changed: what was set before it is kept
- * for that, here, while the model is the one chosen.
+ * answers would come in; a refused one is said over the page, and what is shown goes back to what is saved. Each tab
+ * has its own Reset, which puts back the defaults of what is in that tab and nothing else, saved at once too; it can
+ * be undone until something else is changed: what the tab had before it is kept for that, here, while the model is
+ * the one chosen, and Undo is offered on that tab.
  */
 
 /** The preview's states, in the words of the portal's own Avatar dialog. */
@@ -40,11 +47,30 @@ const FRAMINGS: [FramingKind, string][] = [["bust", msg("Bust")], ["face", msg("
  */
 const TURN: [AvatarMode, number][] = [["input", 2.5], ["thinking", 2], ["output", 4]];
 
-/** The groups the settings are shown in, one under the other, each under a heading of its own. */
-type Group = "camera" | "light" | "motion" | "eyes" | "voice" | "arms";
+/** The groups the settings are shown in, each a tab of its own, in the order of the tabs. */
+export type Group = "camera" | "light" | "motion" | "eyes" | "voice" | "arms";
 const GROUPS: [Group, string][] = [
   ["camera", msg("Camera")], ["light", msg("Light")], ["motion", msg("Motion")], ["eyes", msg("Eyes")], ["voice", msg("Voice")], ["arms", msg("Arms")],
 ];
+
+/**
+ * Every setting by the group it is in: what a tab's Reset puts back, and what its dot says differs from the defaults.
+ * Each setting is in one group: the sliders below, the thinking pose with the motion, and the gaze with the eyes.
+ */
+const KEYS: Record<Group, (keyof ModelSettings)[]> = {
+  camera: ["zoom", "height"],
+  light: ["brightness", "warmth"],
+  motion: ["motion", "breathing", "lean", "thinkingPose"],
+  eyes: ["gaze", "blinkRate"],
+  voice: ["mouth"],
+  arms: ["armDown"],
+};
+
+/** Whether any setting of the group differs from its default. */
+const differs = (settings: ModelSettings, group: Group) => KEYS[group].some((key) => settings[key] !== DEFAULT_SETTINGS[key]);
+
+/** The group's settings as they are in `from`, and no others. */
+const pick = (from: Readonly<ModelSettings>, group: Group): Partial<ModelSettings> => Object.fromEntries(KEYS[group].map((key) => [key, from[key]]));
 
 /** Each slider: the group it is in, its setting, its name and what it does. */
 const SLIDERS: [Group, NumberKey, string, string][] = [
@@ -99,8 +125,11 @@ const UNDO = icon(<path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3" />);
 const PLAY = icon(<path d="M8 5v14l11-7z" />);
 const STOP = icon(<path d="M7 7h10v10H7z" />);
 
-export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
+export function Studio({ model, tab, onTab, onRename, onDelete, onSave, previewRef }: {
   model: Model;
+  /** The tab shown, which the page keeps as another model is chosen. */
+  tab: Group;
+  onTab: (tab: Group) => void;
   onRename: (name: string) => Promise<boolean>;
   onDelete: () => void;
   /** Saves what differs from the defaults: false when it was refused, which the page says. */
@@ -116,8 +145,8 @@ export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
   const drawn = held ?? pending ?? saved;
   const queued = useRef<ModelSettings>();
   const sending = useRef(false);
-  // What was set before Reset to defaults, for Undo, until any other change.
-  const [undo, setUndo] = useState<ModelSettings>();
+  // The tab a Reset was pressed on and what that tab had before it, for Undo, until any other change.
+  const [undo, setUndo] = useState<{ group: Group; values: Partial<ModelSettings> }>();
 
   const save = async (next: ModelSettings) => {
     setPending(next);
@@ -160,7 +189,10 @@ export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
       <div className="mt-3">
         <Licence model={model} />
       </div>
-      <div className="mt-5 grid gap-4 [@container(min-width:36rem)]:grid-cols-[minmax(0,3fr)_minmax(14rem,2fr)] [@container(min-width:36rem)]:gap-6">
+      {/* `--stage` is the side of the preview's square and the height of the tabs' panel: the card's width on a phone,
+          up to 28% of the screen's height; beside the tabs, 42% of the card's width, up to 46% of the screen's height
+          and 23rem. The square's column is that wide. */}
+      <div className="mt-5 grid gap-4 [--stage:min(100cqw,28svh)] [@container(min-width:36rem)]:grid-cols-[var(--stage)_minmax(0,1fr)] [@container(min-width:36rem)]:gap-6 [@container(min-width:36rem)]:[--stage:min(42cqw,46svh,23rem)]">
         {/* Held at the top of the page. Over the settings, it hides them as they scroll under it: the card's own colour,
             as the card's is the page's under its own. The Settings pane's padding (1rem) would leave a strip above it
             that they show in: it is held that much higher, over a band of its colour, and is that much higher in the
@@ -173,16 +205,18 @@ export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
         <div className="min-w-0">
           <Controls
             settings={drawn}
+            tab={tab}
+            onTab={onTab}
             onMove={(patch) => hold({ ...(holding.current ?? drawn), ...patch })}
             onLetGo={letGo}
             onSet={set}
             onReset={() => {
               holding.current = undefined;
               setHeld(undefined);
-              void save({ ...DEFAULT_SETTINGS });
-              setUndo(drawn);
+              void save({ ...drawn, ...pick(DEFAULT_SETTINGS, tab) });
+              setUndo({ group: tab, values: pick(drawn, tab) });
             }}
-            onUndo={undo && (() => void save(undo))}
+            onUndo={undo?.group === tab ? () => void save({ ...drawn, ...undo.values }) : undefined}
           />
         </div>
       </div>
@@ -282,15 +316,15 @@ function NameField({ value, onFinish }: { value: string; onFinish: (name: string
 }
 
 /**
- * The model drawn live in a large dark square, as the Avatar dialog's preview is, in the bust voice mode draws in the
+ * The model drawn live in a dark square, as the Avatar dialog's preview is, in the bust voice mode draws in the
  * middle of its stage or the face it draws in a small box (chosen on the square's corner, as a camera's), in a state
  * chosen under it, with the dialog's made-up voice (syllables rising and falling inside slower phrases) while it
  * listens or speaks. Talk, beside the states it plays through, plays a whole turn. What is drawn while the model is not
  * says why: still loading, a model that cannot be drawn, or a browser without WebGL 2.
  *
- * The square's height is a share of the screen's small viewport (svh), which does not change as a phone's address bar
- * comes and goes: the model is not drawn at a new size as the page scrolls. The five states are one row of equal
- * cells, small enough for German on a phone, as in the Avatar dialog.
+ * The square's side is the designer's `--stage` (see Studio): its height a share of the screen's small viewport (svh),
+ * which does not change as a phone's address bar comes and goes, so the model is not drawn at a new size as the page
+ * scrolls. The five states are one row of equal cells, small enough for German on a phone, as in the Avatar dialog.
  */
 function Preview({ model, settings }: { model: Model; settings: ModelSettings }) {
   const { ui } = portal;
@@ -324,11 +358,11 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
     : shownNow === "unsupported" ? t("WebGL 2 is not available in this browser, so voice mode shows the orb.")
     : t("Loading the model…");
   return (
-    <div className="mx-auto w-full [@container(min-width:36rem)]:max-w-[min(36rem,62svh)]">
+    <div className="w-full">
       <div
         role="region"
         aria-label={t("Preview")}
-        className="relative mx-auto grid aspect-square w-full max-w-[34svh] place-items-center overflow-hidden rounded-xl bg-[#0b1220] [@container(min-width:36rem)]:max-w-none"
+        className="relative mx-auto grid aspect-square w-full max-w-[var(--stage)] place-items-center overflow-hidden rounded-xl bg-[#0b1220]"
       >
         {/* The canvas is larger than the box by 3/14 of it on each side: at 70% the canvas fills the square. */}
         <div className="relative aspect-square w-[70%]" data-testid="flair-avatar-preview">
@@ -388,19 +422,28 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
 }
 
 /**
- * What can be set on the model, all of it at once in one column, in groups under headings of their own: the camera,
- * the light, how it moves, its eyes, its voice and its arms. A value that differs from the default is shown in the
- * accent colour. Reset to defaults is on the column's heading, as it puts back all of it, and turns into Undo once
- * pressed, until something else is changed. The labels of `ui.Segments` are passed translated: it says them through
- * the portal's own texts, which do not have the extension's.
+ * What can be set on the model, in tabs as the portal's own are (the Avatar dialog's): the camera, the light, how it
+ * moves, its eyes, its voice and its arms. The arrow keys go from tab to tab (round the ends), Home and End to the
+ * first and the last, and a tab is shown as it is reached; Tab passes the row in one stop, on the tab shown. A tab
+ * where anything differs from the defaults has a dot, which says so to a screen reader too, and a value that differs
+ * is shown in the accent colour.
+ *
+ * The panel under the tabs is the preview's height (`--stage`) whichever tab is shown, and scrolls inside where a tab
+ * has more than that. At its foot, outside what scrolls, is the tab's own Reset, named for the tab ("Reset Camera"):
+ * it puts back what is in that tab, and is disabled while all of it is at its defaults. Once pressed it turns into
+ * Undo, on that tab, until something else is changed. The labels of `ui.Segments` are passed translated: it says them
+ * through the portal's own texts, which do not have the extension's.
  */
-function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
+function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUndo }: {
   settings: ModelSettings;
+  tab: Group;
+  onTab: (tab: Group) => void;
   onMove: (patch: Partial<ModelSettings>) => void;
   onLetGo: () => void;
   onSet: (patch: Partial<ModelSettings>) => void;
+  /** Puts back the defaults of the tab shown. */
   onReset: () => void;
-  /** Puts back what was set before Reset to defaults, while that can be done. */
+  /** Puts back what the tab shown had before its Reset, while that can be done. */
   onUndo?: () => void;
 }) {
   const { ui } = portal;
@@ -421,34 +464,37 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
       />
     ));
   const gazeHint = GAZE.find(([id]) => id === settings.gaze)![2];
+  const title = GROUPS.find(([id]) => id === tab)![1];
   return (
     <div data-setting={t("Look and motion")}>
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <h4 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{t("Look and motion")}</h4>
-        <div className="flex items-center gap-2">
-          <p role="status" className="text-[11px] text-fg-faint">{onUndo ? t("Back to the defaults.") : ""}</p>
-          {/* One button for both, so it keeps the focus as it turns from one into the other. */}
+      <div role="tablist" aria-label={t("Look and motion")} onKeyDown={ui.tabKeys} className="flex overflow-x-auto overflow-y-hidden border-b border-line">
+        {GROUPS.map(([id, label]) => (
           <button
+            key={id}
+            id={`${ids}-${id}`}
             type="button"
-            className={ui.classes.ghost}
-            disabled={!onUndo && Object.keys(changed(settings)).length === 0}
-            onClick={onUndo ?? onReset}
+            role="tab"
+            aria-selected={tab === id}
+            aria-controls={`${ids}-panel`}
+            tabIndex={tab === id ? 0 : -1}
+            onClick={() => onTab(id)}
+            className={`relative -mb-px shrink-0 border-b-2 px-2 py-1.5 text-xs transition ${tab === id ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg"}`}
           >
-            {onUndo ? UNDO : RESET}
-            {onUndo ? t("Undo") : t("Reset to defaults")}
+            {t(label)}
+            {/* In the tab's corner, so it takes no room in the row: the tabs stay where they are as it comes and goes. */}
+            {differs(settings, id) && <span role="img" aria-label={t("Changed")} title={t("Changed")} className="absolute right-0.5 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
           </button>
-        </div>
+        ))}
       </div>
-      <p className="mt-0.5 text-xs text-fg-subtle">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
-      {GROUPS.map(([group, title]) => (
-        <div key={group} role="group" aria-labelledby={`${ids}-${group}`} className="mt-4 space-y-4 border-t border-line pt-4">
-          <h5 id={`${ids}-${group}`} className="text-xs font-medium text-fg">{t(title)}</h5>
-          {group === "motion" && reduced && (
+      <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-${tab}`} className="flex h-[var(--stage)] flex-col">
+        {/* Room at its sides for a slider's focus ring, which what scrolls would cut. */}
+        <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-3 pt-3">
+          {tab === "motion" && reduced && (
             <p className="text-[11px] text-fg-faint">
               {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
             </p>
           )}
-          {group === "eyes" && (
+          {tab === "eyes" && (
             <div>
               <p className="text-xs text-fg-muted">{t("Gaze")}</p>
               <div className="mt-1.5">
@@ -457,8 +503,8 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
               <p className="mt-1 text-[11px] text-fg-faint">{t(gazeHint)}</p>
             </div>
           )}
-          {sliders(group)}
-          {group === "motion" && (
+          {sliders(tab)}
+          {tab === "motion" && (
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1 text-xs text-fg-muted">
                 {t("Thinking pose")}
@@ -468,7 +514,16 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
             </div>
           )}
         </div>
-      ))}
+        <div className="flex items-center justify-end gap-2 border-t border-line pt-2">
+          <p role="status" className="min-w-0 text-[11px] text-fg-faint">{onUndo ? t("Back to the defaults.") : ""}</p>
+          {/* One button for both, so it keeps the focus as it turns from one into the other. */}
+          <button type="button" className={`shrink-0 ${ui.classes.ghost}`} disabled={!onUndo && !differs(settings, tab)} onClick={onUndo ?? onReset}>
+            {onUndo ? UNDO : RESET}
+            {onUndo ? t("Undo") : t("Reset {group}", { group: t(title) })}
+          </button>
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] text-fg-faint">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
     </div>
   );
 }

@@ -31,6 +31,7 @@ export const de: Record<string, string> = {
     "Von VRoid Project. VRM 1.0, 20 MB. VRM Public License 1.0: kommerzielle Nutzung erlaubt, keine Namensnennung nötig, darf weitergegeben werden. Zusätzlich gelten VRoids eigene Bedingungen für seine Beispielmodelle.",
   "Camera": "Kamera",
   "Cannot be drawn": "Kann nicht gezeigt werden",
+  "Changed": "Geändert",
   "Choose a .vrm file, or drop one here": "Wähle eine .vrm-Datei oder lege eine hier ab",
   "Commercial use": "Kommerzielle Nutzung",
   "Commercial use allowed": "Kommerzielle Nutzung erlaubt",
@@ -106,7 +107,7 @@ export const de: Record<string, string> = {
   "Redistribution not stated": "Weitergabe nicht angegeben",
   "Rename": "Umbenennen",
   "Required": "Erforderlich",
-  "Reset to defaults": "Auf Standard zurücksetzen",
+  "Reset {group}": "{group} zurücksetzen",
   "Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.":
     "Wird beim Ändern gespeichert, für dieses Modell überall, wo es gezeigt wird: hier, im Sprachmodus und im Avatar-Dialog jedes Agenten.",
   "Speaking": "Spricht",

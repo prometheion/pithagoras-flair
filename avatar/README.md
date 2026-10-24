@@ -28,9 +28,9 @@ Each model you add is a choice of its own in every agent's Avatar dialog, so two
 
 ## Changing how a model looks and moves
 
-Beside the preview (under it on a phone, where the preview stays at the top as you scroll) is what can be set on the model, all of it at once, in groups. It is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. A value set apart from its default is shown in colour. **Reset to defaults** puts all of it back, and turns into **Undo** until something else is changed.
+Beside the preview (under it on a phone) is what can be set on the model, in six tabs: Camera, Light, Motion, Eyes, Voice and Arms. The tabs' panel is as tall as the preview whichever tab is shown, and scrolls inside when a tab has more than fits, so the preview and its settings are seen together, in the Settings dialog of a 1280 by 800 screen too, and choosing a tab does not move the page. What is set is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. A value set apart from its default is shown in colour, and its tab has a dot. Each tab has its own reset (**Reset Camera**, **Reset Light** and so on), which puts back that tab's settings alone and turns into **Undo** until something else is changed.
 
-| Group | Setting | What it does | Range |
+| Tab | Setting | What it does | Range |
 | --- | --- | --- | --- |
 | Camera | Zoom | how close the camera is, in the bust and the face alike | 0.6× to 1.6× |
 | | Height | moves the model up or down in its box: for a model whose head is cut off or sits low | −10 to +10 cm |
@@ -45,7 +45,7 @@ Beside the preview (under it on a phone, where the preview stays at the top as y
 | Voice | Mouth sensitivity | how wide the mouth opens at the same loudness: raise it for a quiet voice | 50% to 200% |
 | Arms | Arm angle | how far the arms come down from the T-pose a VRM model is made in: change it when they go into the body or stand out stiffly | 46° to 83° |
 
-With **reduce motion** set in the system, breathing, sway and eye movement stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion group says so.
+With **reduce motion** set in the system, breathing, sway and eye movement stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion tab says so.
 
 The picture on the agent's card is made again on this page whenever what shows in it (zoom, height, the lights, the arm angle) changes, and once for every model after an update changes how models are drawn. The Agents page shows the last picture made until the 3D Avatar page in Settings is opened.
 

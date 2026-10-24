@@ -7,8 +7,9 @@ import { tinyVrm0, tinyVrm1 } from "../tiny-vrm.ts";
  * The 3D Avatar's page in Settings, on the extension's test page: the gallery of models, added from files picked or
  * dropped, the free models it points to while there are none, a file refused in the page's words, what a model's
  * licence says, renaming, downloading and deleting it, the portrait made for an agent's card and made again when it
- * is out of date, the live preview with its framing, states and Talk, what can be set on a model and how it is saved,
- * the page on a phone, and all of it in German.
+ * is out of date, the live preview with its framing, states and Talk, what can be set on a model in its tabs and how it
+ * is saved, each tab's Reset and Undo, how tall the designer is on a laptop's screen, a larger one and a phone, and all
+ * of it in German.
  */
 
 const API = "/api/x/%40pithagoras/flair-avatar";
@@ -39,6 +40,10 @@ const isPortrait = (r: Request) => r.method() === "PUT" && new URL(r.url()).path
 const isSettings = (r: Request) => r.method() === "PUT" && new URL(r.url()).pathname.endsWith("/settings");
 const listed = async (request: APIRequestContext) => (await (await request.get(`${API}/models`)).json()).models;
 const drawn = (page: Page) => expect(page.getByTestId("flair-avatar-preview").locator(".flair-avatar")).toHaveAttribute("data-shown", "drawn", { timeout: 30_000 });
+/** A tab of the designer by its name, with the dot's word after it or not. */
+const tab = (page: Page, name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) });
+/** The designer: the preview with its controls, and the tabs with their panel; the nearest that holds both. */
+const designer = (page: Page) => page.getByRole("region", { name: "Preview" }).locator("xpath=ancestor::div[.//*[@role='tablist']][1]");
 
 test("with no models, the page says how to add one and where free ones are", async ({ page, request }) => {
   await open(page, request);
@@ -174,7 +179,7 @@ test("a model is renamed in place: Enter and clicking away keep the name, Escape
   await expect(studio(page, "Alicia").getByRole("heading", { level: 3 })).toHaveText("Alicia");
   await studio(page, "Alicia").getByRole("button", { name: "Rename", exact: true }).click();
   await field().fill("Bea");
-  await page.getByText("Look and motion").click();
+  await page.getByText("Saved as you change them", { exact: false }).click();
   await expect(studio(page, "Bea").getByRole("heading", { level: 3 })).toHaveText("Bea");
   expect((await listed(request))[0].name).toBe("Bea");
   await expect(page.getByRole("alert")).toHaveCount(0);
@@ -264,7 +269,7 @@ test("the preview draws the bust voice mode draws, or the face, in the state cho
   await expect(talk).toBeVisible();
 });
 
-test("a slider is saved as it is let go, drawn before, and its portrait made again; Reset to defaults saves them all, and Undo puts them back", async ({ page, request }) => {
+test("a slider is saved as it is let go, drawn before, and its portrait made again; a tab's Reset puts back that tab alone, and Undo puts it back", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
   await drawn(page);
@@ -285,18 +290,31 @@ test("a slider is saved as it is let go, drawn before, and its portrait made aga
   expect(sent.at(-1)!.postDataJSON()).toEqual({ settings: { zoom: 1.2 } });
   await portrait;
 
-  const reset = page.getByRole("button", { name: "Reset to defaults" });
+  // Something set on another tab, which the Camera tab's Reset leaves as it is.
+  await tab(page, "Light").click();
+  const warmth = page.getByRole("slider", { name: "Warmth" });
+  await warmth.focus();
+  await warmth.press("ArrowRight");
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.2, warmth: 0.05 });
+  await tab(page, "Camera").click();
+  const reset = page.getByRole("button", { name: "Reset Camera" });
   await expect(reset).toBeEnabled();
   await reset.click();
-  await expect.poll(() => sent.at(-1)!.postDataJSON()).toEqual({ settings: {} });
+  await expect.poll(() => sent.at(-1)!.postDataJSON()).toEqual({ settings: { warmth: 0.05 } });
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.00×");
-  await expect.poll(async () => (await listed(request))[0].settings).toEqual({});
-  // The same button, Undo now, with the focus still on it, until something else is changed.
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ warmth: 0.05 });
+  // The same button, Undo now, with the focus still on it, until something else is changed; offered on that tab alone.
   const undo = page.getByRole("button", { name: "Undo" });
   await expect(undo).toBeFocused();
-  await expect(page.getByRole("status").filter({ hasText: "Back to the defaults." })).toHaveCount(1);
+  const said = page.getByRole("status").filter({ hasText: "Back to the defaults." });
+  await expect(said).toHaveCount(1);
+  await tab(page, "Light").click();
+  await expect(undo).toHaveCount(0);
+  await expect(said).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reset Light" })).toBeEnabled();
+  await tab(page, "Camera").click();
   await undo.click();
-  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.2 });
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.2, warmth: 0.05 });
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.20×");
   await expect(reset).toBeFocused();
   await expect(page.getByText("Back to the defaults.")).toHaveCount(0);
@@ -305,8 +323,11 @@ test("a slider is saved as it is let go, drawn before, and its portrait made aga
   await zoom.press("ArrowLeft");
   await expect(undo).toHaveCount(0);
   await zoom.press("ArrowRight");
-  await expect.poll(async () => (await listed(request))[0].settings).toEqual({});
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ warmth: 0.05 });
+  // A tab whose settings are all at their defaults has its Reset disabled; the Light tab's is not.
   await expect(reset).toBeDisabled();
+  await tab(page, "Light").click();
+  await expect(page.getByRole("button", { name: "Reset Light" })).toBeEnabled();
 });
 
 test("a slider set as a screen reader sets it, with no key, pointer or focus, is saved; and dragged with the mouse, once as it is let go", async ({ page, request }) => {
@@ -382,53 +403,116 @@ test("a key pressed while a save's list waits behind a portrait's steps from wha
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.10×");
 });
 
-test("each slider says its value as it is shown, and the switch and the choices save at once", async ({ page, request }) => {
+test("each tab has its own settings in the one panel, each slider says its value as it is shown, a tab with any set apart from its default has a dot that says so, and the switch and the choices save at once", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
   const slider = (name: string) => page.getByRole("slider", { name, exact: true });
-  for (const [name, said] of [["Zoom", "1.00×"], ["Height", "0 cm"], ["Brightness", "100%"], ["Warmth", "Neutral"]]) await expect(slider(name)).toHaveAttribute("aria-valuetext", said);
+  const panel = page.getByRole("tabpanel");
+  const dot = (name: string) => tab(page, name).getByRole("img", { name: "Changed", exact: true });
+  // Each tab shows its own settings and no others, and the panel is named by it; nothing is changed yet, so no tab has a dot.
+  for (const [name, said] of [
+    ["Camera", [["Zoom", "1.00×"], ["Height", "0 cm"]]],
+    ["Light", [["Brightness", "100%"], ["Warmth", "Neutral"]]],
+    ["Motion", [["Overall motion", "100%"], ["Breathing and sway", "100%"], ["Leaning in", "100%"]]],
+    ["Eyes", [["Blinking", "About 15 a minute"]]],
+    ["Voice", [["Mouth sensitivity", "100%"]]],
+    ["Arms", [["Arm angle", "69°"]]],
+  ] as const) {
+    await tab(page, name).click();
+    await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("tabpanel", { name, exact: true })).toBeVisible();
+    await expect(panel.getByRole("slider")).toHaveCount(said.length);
+    for (const [one, value] of said) await expect(panel.getByRole("slider", { name: one, exact: true })).toHaveAttribute("aria-valuetext", value);
+    await expect(dot(name)).toHaveCount(0);
+  }
+  await tab(page, "Motion").click();
+  await expect(panel.getByRole("switch", { name: "Thinking pose" })).toBeVisible();
+  await tab(page, "Eyes").click();
+  await expect(panel.getByRole("radiogroup", { name: "Gaze" })).toBeVisible();
+
+  await tab(page, "Camera").click();
   await slider("Height").focus();
   await slider("Height").press("ArrowRight");
   await expect(slider("Height")).toHaveAttribute("aria-valuetext", "+1 cm");
-  await slider("Warmth").focus();
-  await slider("Warmth").press("ArrowLeft");
-  await expect(slider("Warmth")).toHaveAttribute("aria-valuetext", "Cooler 5%");
   await expect(slider("Zoom")).toHaveAccessibleDescription("How close the camera is.");
-
-  // All of them at once, each in its group, a value set apart from the default in the accent colour.
-  const group = (name: string) => page.getByRole("group", { name, exact: true });
-  for (const [name, sliders] of [
-    ["Camera", ["Zoom", "Height"]],
-    ["Light", ["Brightness", "Warmth"]],
-    ["Motion", ["Overall motion", "Breathing and sway", "Leaning in"]],
-    ["Eyes", ["Blinking"]],
-    ["Voice", ["Mouth sensitivity"]],
-    ["Arms", ["Arm angle"]],
-  ] as const) {
-    await expect(group(name).getByRole("slider")).toHaveCount(sliders.length);
-    for (const one of sliders) await expect(group(name).getByRole("slider", { name: one, exact: true })).toBeVisible();
-  }
-  await expect(group("Motion").getByRole("switch", { name: "Thinking pose" })).toBeVisible();
-  await expect(group("Eyes").getByRole("radiogroup", { name: "Gaze" })).toBeVisible();
+  // A value set apart from the default in the accent colour, and its tab's dot, named for a screen reader.
   const value = (name: string) => page.getByRole("slider", { name, exact: true }).locator("xpath=preceding-sibling::span/span[2]");
   await expect(value("Height")).toHaveClass(/text-accent/);
   await expect(value("Zoom")).not.toHaveClass(/text-accent/);
-  for (const [name, said] of [["Overall motion", "100%"], ["Breathing and sway", "100%"], ["Blinking", "About 15 a minute"], ["Leaning in", "100%"]]) await expect(slider(name)).toHaveAttribute("aria-valuetext", said);
+  await expect(dot("Camera")).toHaveCount(1);
+  await expect(tab(page, "Camera")).toHaveAccessibleName("Camera Changed");
+  await expect(dot("Light")).toHaveCount(0);
+  await tab(page, "Light").click();
+  await slider("Warmth").focus();
+  await slider("Warmth").press("ArrowLeft");
+  await expect(slider("Warmth")).toHaveAttribute("aria-valuetext", "Cooler 5%");
+  await expect(dot("Light")).toHaveCount(1);
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05 });
 
   const sent: Request[] = [];
   page.on("request", (r) => isSettings(r) && sent.push(r));
+  await tab(page, "Motion").click();
+  await expect(dot("Motion")).toHaveCount(0);
   await page.getByRole("switch", { name: "Thinking pose" }).click();
   await expect(page.getByRole("switch", { name: "Thinking pose" })).toHaveAttribute("aria-checked", "false");
+  await expect(dot("Motion")).toHaveCount(1);
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05, thinkingPose: false });
+  await tab(page, "Eyes").click();
   const gaze = page.getByRole("radiogroup", { name: "Gaze" });
   await expect(page.getByText("Its eyes stay on you, moving a little now and then.")).toBeVisible();
   await gaze.getByRole("radio", { name: "Around" }).click();
   await expect(gaze.getByRole("radio", { name: "Around" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByText("Its eyes wander while nothing is said, and come back to you when you talk or it speaks.")).toBeVisible();
+  await expect(dot("Eyes")).toHaveCount(1);
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05, thinkingPose: false, gaze: "around" });
   expect(sent.length).toBe(2);
-  await expect(slider("Mouth sensitivity")).toHaveAttribute("aria-valuetext", "100%");
-  await expect(slider("Arm angle")).toHaveAttribute("aria-valuetext", "69°");
+  for (const name of ["Voice", "Arms"]) await expect(dot(name)).toHaveCount(0);
+});
+
+test("the tabs are the portal's: arrows round the ends, Home and End, the tab shown selected and the one stop of Tab, and kept as another model is chosen", async ({ page, request }) => {
+  await open(page, request);
+  await add(page, [
+    { name: "one.vrm", buffer: Buffer.from(tinyVrm1()) },
+    { name: "zero.vrm", buffer: Buffer.from(tinyVrm0()) },
+  ]);
+  const list = page.getByRole("tablist", { name: "Look and motion" });
+  const tabs = list.getByRole("tab");
+  await expect(tabs).toHaveText(["Camera", "Light", "Motion", "Eyes", "Voice", "Arms"]);
+  const shown = async (name: string) => {
+    await expect(tab(page, name)).toBeFocused();
+    await expect(list.locator('[aria-selected="true"]')).toHaveText(name);
+    // Only the tab shown is a stop for Tab; the panel is the one it controls, and is named by it.
+    await expect(list.locator('[tabindex="0"]')).toHaveText(name);
+    await expect(list.locator('[tabindex="-1"]')).toHaveCount(5);
+    const panel = page.getByRole("tabpanel", { name, exact: true });
+    await expect(panel).toBeVisible();
+    expect(await tab(page, name).getAttribute("aria-controls")).toBe(await panel.getAttribute("id"));
+  };
+  await tab(page, "Camera").focus();
+  await page.keyboard.press("ArrowRight");
+  await shown("Light");
+  await expect(page.getByRole("tabpanel").getByRole("slider", { name: "Brightness" })).toBeVisible();
+  await page.keyboard.press("End");
+  await shown("Arms");
+  await page.keyboard.press("ArrowRight");
+  await shown("Camera");
+  await page.keyboard.press("ArrowLeft");
+  await shown("Arms");
+  await page.keyboard.press("Home");
+  await shown("Camera");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await shown("Voice");
+  // Tab leaves the row for what is in the panel.
+  await page.keyboard.press("Tab");
+  await expect(page.getByRole("slider", { name: "Mouth sensitivity" })).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(tab(page, "Voice")).toBeFocused();
+
+  // Another model shows the same tab.
+  await cards(page).nth(1).click();
+  await expect(studio(page, "Tiny Zero").getByRole("tab", { name: "Voice", selected: true })).toBeVisible();
+  await expect(page.getByRole("slider", { name: "Mouth sensitivity" })).toBeVisible();
 });
 
 test("a refused save is said over the page, and the controls show what is saved again", async ({ page, request }) => {
@@ -442,14 +526,16 @@ test("a refused save is said over the page, and the controls show what is saved 
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.00×");
 });
 
-test("with less motion asked for by the system, the Motion group says what that leaves", async ({ page, request }) => {
+test("with less motion asked for by the system, the Motion tab says what that leaves", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
   const note = "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.";
   await expect(page.getByText(note)).toHaveCount(0);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page, request, "en", false);
-  await expect(page.getByRole("group", { name: "Motion", exact: true }).getByText(note)).toBeVisible();
+  await expect(page.getByText(note)).toHaveCount(0);
+  await tab(page, "Motion").click();
+  await expect(page.getByRole("tabpanel", { name: "Motion", exact: true }).getByText(note)).toBeVisible();
 });
 
 test("a portrait made before the drawing changed is made again when the page is opened, and a current one is not", async ({ page, request }) => {
@@ -473,40 +559,73 @@ test("a portrait made before the drawing changed is made again when the page is 
   expect(sent).toBe(0);
 });
 
-test("the preview is wider than the settings beside it and stays in view as they scroll; on a phone it is over them, held at the top, its states one row", async ({ page, request }) => {
-  await page.setViewportSize({ width: 1280, height: 860 });
+test("beside the preview, the tabs' panel is as tall as its square whichever tab is shown, the designer fits the Settings dialog on a 1280 by 800 screen, and a larger screen makes it no taller", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
   const preview = page.getByRole("region", { name: "Preview" });
-  const zoom = page.getByRole("slider", { name: "Zoom" });
-  const [square, slider] = [(await preview.boundingBox())!, (await zoom.boundingBox())!];
-  expect(square.width).toBeGreaterThan(slider.width);
+  const panel = page.getByRole("tabpanel");
+  const square = (await preview.boundingBox())!;
   expect(Math.abs(square.width - square.height)).toBeLessThan(1);
-  // Beside: the settings start at the square's top, not under it.
-  expect(slider.x).toBeGreaterThan(square.x + square.width);
-  expect(slider.y).toBeLessThan(square.y + square.height);
-  const held = async () => {
-    await page.getByRole("slider", { name: "Arm angle" }).scrollIntoViewIfNeeded();
-    await page.evaluate(() => window.scrollBy(0, 200));
-    const box = (await preview.boundingBox())!;
-    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-    expect(box.y).toBeGreaterThanOrEqual(-1);
-    expect(box.y).toBeLessThan(40);
-    return box;
-  };
-  await held();
+  // Beside: the tabs start at the square's top, right of it.
+  const tabs = (await page.getByRole("tablist", { name: "Look and motion" }).boundingBox())!;
+  expect(tabs.x).toBeGreaterThan(square.x + square.width);
+  expect(Math.abs(tabs.y - square.y)).toBeLessThan(1);
+  // The Settings dialog shows 621 pixels of its page at this size: 92% of the window's height, less its header (57)
+  // and its pane's padding (24 above and under), as the portal draws them (Modal.tsx, ConfigModal.tsx). The whole
+  // designer is seen in that at once.
+  const tall = async () => (await designer(page).boundingBox())!.height;
+  const height = await tall();
+  expect(height).toBeLessThanOrEqual(621);
+  // Choosing a tab changes no height: the panel's (the square's), the designer's, the page's.
+  const page0 = await page.evaluate(() => document.scrollingElement!.scrollHeight);
+  for (const name of ["Camera", "Light", "Motion", "Eyes", "Voice", "Arms"]) {
+    await tab(page, name).click();
+    expect(Math.abs((await panel.boundingBox())!.height - square.height)).toBeLessThan(1);
+    expect(Math.abs((await tall()) - height)).toBeLessThan(1);
+    expect(await page.evaluate(() => document.scrollingElement!.scrollHeight)).toBe(page0);
+    // What is in the tab is in the panel, scrolled inside it where it has more than fits.
+    const scrolls = await panel.evaluate((p) => getComputedStyle(p.firstElementChild!).overflowY);
+    expect(scrolls).toBe("auto");
+  }
+  // The tallest tab has room without scrolling.
+  await tab(page, "Motion").click();
+  expect(await panel.evaluate((p) => p.firstElementChild!.scrollHeight <= p.firstElementChild!.clientHeight)).toBe(true);
+  // A larger screen gives it no more height.
+  for (const [width, h] of [[1440, 900], [1920, 1080]]) {
+    await page.setViewportSize({ width, height: h });
+    expect(Math.abs((await tall()) - height)).toBeLessThan(1);
+  }
+});
 
-  await page.evaluate(() => window.scrollTo(0, 0));
+test("on a phone the preview is over the tabs, the panel as tall as its square, the states one row, and all of it seen at once; where the page goes on under it, the preview is held at the top", async ({ page, request }) => {
   await page.setViewportSize({ width: 375, height: 812 });
+  await open(page, request);
+  await addOne(page, Buffer.from(tinyVrm1()));
+  const preview = page.getByRole("region", { name: "Preview" });
   const over = (await preview.boundingBox())!;
-  expect(over.y + over.height).toBeLessThan((await zoom.boundingBox())!.y);
-  // A third of the screen's height, so the settings have the rest.
-  expect(over.height).toBeLessThan(812 * 0.35);
+  expect(over.y + over.height).toBeLessThan((await page.getByRole("tablist", { name: "Look and motion" }).boundingBox())!.y);
+  // 28% of the screen's height, and the panel as tall.
+  expect(Math.abs(over.height - 812 * 0.28)).toBeLessThan(1);
+  expect(Math.abs((await page.getByRole("tabpanel").boundingBox())!.height - over.height)).toBeLessThan(1);
   const states = page.getByRole("radiogroup", { name: "Preview state" }).getByRole("radio");
   const tops = await states.evaluateAll((all) => all.map((state) => state.getBoundingClientRect().top));
   expect(new Set(tops).size).toBe(1);
-  await held();
+  // No taller than the Settings dialog shows of its page on this phone: 94% of its height, less the dialog's header
+  // (59) and the pane's padding (16 above and under).
+  expect((await designer(page).boundingBox())!.height).toBeLessThanOrEqual(812 * 0.94 - 59 - 32);
   expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
+
+  // With more of the page under it than the screen has room for, as on a shorter phone, the preview stays at the top
+  // as the tabs and their panel scroll under it.
+  await page.evaluate(() => (document.body.style.paddingBottom = "100vh"));
+  await tab(page, "Motion").click();
+  await page.getByRole("switch", { name: "Thinking pose" }).scrollIntoViewIfNeeded();
+  await page.evaluate(() => window.scrollBy(0, 200));
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  const held = (await preview.boundingBox())!;
+  expect(held.y).toBeGreaterThanOrEqual(-1);
+  expect(held.y).toBeLessThan(40);
 });
 
 /** Models of their own name each, `Tiny 1` and on: a file differs by its name, and the server keeps one of each file. */
@@ -528,7 +647,7 @@ test("on a phone the page is one column: the gallery one row that scrolls sidewa
   await cards(page).last().scrollIntoViewIfNeeded();
   await expect(cards(page).last()).toBeInViewport();
   const preview = await page.getByRole("region", { name: "Preview" }).boundingBox();
-  const settings = await page.getByRole("group", { name: "Camera", exact: true }).boundingBox();
+  const settings = await page.getByRole("tablist", { name: "Look and motion" }).boundingBox();
   expect(preview!.y + preview!.height).toBeLessThan(settings!.y);
   expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
 });
@@ -596,22 +715,39 @@ test("in German, all of it", async ({ page, request }) => {
   await expect(page.getByRole("radiogroup", { name: "Ausschnitt" }).getByRole("radio")).toHaveText(["Brustbild", "Gesicht"]);
   await expect(page.getByRole("radiogroup", { name: "Vorschauzustand" }).getByRole("radio")).toHaveText(["Ruhend", "Hört zu", "Spricht", "Denkt nach", "Stumm"]);
   await expect(one).toContainText("Spielt eine erfundene Runde ab: Du sprichst, es denkt nach, dann antwortet es.");
-  await expect(one).toContainText("Aussehen und Bewegung");
-  for (const name of ["Kamera", "Licht", "Bewegung", "Augen", "Stimme", "Arme"]) await expect(one.getByRole("group", { name, exact: true })).toBeVisible();
-  for (const [name, said] of [["Zoom", "1,00×"], ["Höhe", "0 cm"], ["Helligkeit", "100\u00a0%"], ["Wärme", "Neutral"]]) {
-    await expect(page.getByRole("slider", { name, exact: true })).toHaveAttribute("aria-valuetext", said);
-  }
-  for (const [name, said] of [["Bewegung insgesamt", "100\u00a0%"], ["Atmen und Wiegen", "100\u00a0%"], ["Blinzeln", "Etwa 15 pro Minute"], ["Vorbeugen", "100\u00a0%"]]) {
-    await expect(page.getByRole("slider", { name, exact: true })).toHaveAttribute("aria-valuetext", said);
-  }
+  await expect(one).toContainText("Wird beim Ändern gespeichert, für dieses Modell überall, wo es gezeigt wird: hier, im Sprachmodus und im Avatar-Dialog jedes Agenten.");
+  const list = one.getByRole("tablist", { name: "Aussehen und Bewegung" });
+  await expect(list.getByRole("tab")).toHaveText(["Kamera", "Licht", "Bewegung", "Augen", "Stimme", "Arme"]);
+  const slider = (name: string) => page.getByRole("slider", { name, exact: true });
+  for (const [name, said] of [["Zoom", "1,00×"], ["Höhe", "0 cm"]]) await expect(slider(name)).toHaveAttribute("aria-valuetext", said);
+  await tab(page, "Licht").click();
+  for (const [name, said] of [["Helligkeit", "100\u00a0%"], ["Wärme", "Neutral"]]) await expect(slider(name)).toHaveAttribute("aria-valuetext", said);
+  await tab(page, "Bewegung").click();
+  for (const [name, said] of [["Bewegung insgesamt", "100\u00a0%"], ["Atmen und Wiegen", "100\u00a0%"], ["Vorbeugen", "100\u00a0%"]]) await expect(slider(name)).toHaveAttribute("aria-valuetext", said);
   await expect(page.getByRole("switch", { name: "Denkpose" })).toBeVisible();
+  await tab(page, "Augen").click();
+  await expect(slider("Blinzeln")).toHaveAttribute("aria-valuetext", "Etwa 15 pro Minute");
   await expect(page.getByRole("radiogroup", { name: "Blick" }).getByRole("radio")).toHaveText(["Auf dich", "Umher"]);
-  await expect(page.getByRole("slider", { name: "Empfindlichkeit des Munds" })).toHaveAccessibleDescription("Wie weit sich der Mund bei gleicher Lautstärke öffnet. Erhöhe sie für eine leise Stimme.");
-  await expect(page.getByRole("slider", { name: "Armwinkel" })).toHaveAttribute("aria-valuetext", "69°");
-  const zoom = page.getByRole("slider", { name: "Zoom" });
+  await tab(page, "Stimme").click();
+  await expect(slider("Empfindlichkeit des Munds")).toHaveAccessibleDescription("Wie weit sich der Mund bei gleicher Lautstärke öffnet. Erhöhe sie für eine leise Stimme.");
+  await tab(page, "Arme").click();
+  await expect(slider("Armwinkel")).toHaveAttribute("aria-valuetext", "69°");
+  await expect(one.getByRole("button", { name: "Arme zurücksetzen", exact: true })).toBeDisabled();
+  await tab(page, "Kamera").click();
+  const zoom = slider("Zoom");
   await zoom.focus();
   await zoom.press("ArrowRight");
-  await one.getByRole("button", { name: "Auf Standard zurücksetzen", exact: true }).click();
+  await expect(tab(page, "Kamera").getByRole("img", { name: "Geändert", exact: true })).toHaveCount(1);
+  await one.getByRole("button", { name: "Kamera zurücksetzen", exact: true }).click();
   await expect(one.getByRole("button", { name: "Rückgängig", exact: true })).toBeVisible();
   await expect(one.getByRole("status").filter({ hasText: "Auf Standard zurückgesetzt." })).toHaveCount(1);
+
+  // In the Settings dialog of a window 1024 pixels wide the card is 742 wide (1024 less the dialog's margins, 16 on
+  // each side, and its border, its rail, 208, and its pane's padding, 20 on each side): the German tabs fit in one
+  // row, none cut.
+  await page.setViewportSize({ width: 742, height: 768 });
+  expect(await list.evaluate((row) => row.scrollWidth <= row.clientWidth)).toBe(true);
+  for (const each of await list.getByRole("tab").all()) expect(await each.evaluate((t) => t.scrollWidth <= t.clientWidth)).toBe(true);
+  const [first, last] = [(await list.getByRole("tab").first().boundingBox())!, (await list.getByRole("tab").last().boundingBox())!];
+  expect(Math.abs(first.y - last.y)).toBeLessThan(1);
 });
