@@ -1,3 +1,5 @@
+import type { ModelSettings } from "./model-settings";
+
 /**
  * A model as the server half keeps it and the page is told of it, shared by both halves (types only). The server
  * writes one as a file beside the model's own (`models/<id>.json` in the extension's data folder), and `GET /models`
@@ -13,6 +15,13 @@ export type Model = {
   added: string;
   /** When its portrait was made, ISO; none until the Settings page has made one. */
   portrait?: string;
+  /**
+   * What its portrait was drawn with (`portraitStamp` in stage.ts): the version of the drawing and the settings that
+   * show at rest. The Settings page makes the portrait again when it differs from what it would draw now.
+   */
+  portraitStamp?: string;
+  /** What is set on it on the Settings page (model-settings.ts): only the values that differ from the defaults. */
+  settings?: Partial<ModelSettings>;
 } & ModelSpec;
 
 /** The VRM version a model is made in, and what it says of its own licence under the names that version gives them. */

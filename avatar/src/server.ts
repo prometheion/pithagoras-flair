@@ -4,6 +4,7 @@ import path from "node:path";
 import type { Request, Response } from "express";
 import type { ServerPortal } from "@pithagoras/extension-api/server";
 import type { Model } from "./model";
+import { BadSettings, checkSettings } from "./model-settings";
 import { checkVrm, modelName, NAME_MAX, Refused } from "./vrm-file";
 
 /** The largest model taken, in bytes. VRoid's exports are usually 10 to 30 MB. */
@@ -30,6 +31,8 @@ const STALE_MS = 60_000;
  *   PUT    /models/:id/portrait  a PNG, at most 1 MiB: the picture the Agents page shows (the Settings page makes it)
  *   GET    /models/:id/portrait  that picture
  *   PATCH  /models/:id           { name }: a new name, 1 to 80 characters
+ *   PUT    /models/:id/settings  { settings }: what is set on the model (model-settings.ts), checked, in place of what
+ *                                was; {} is every default
  *   DELETE /models/:id           the model, its picture and what is kept of it
  *
  * Each model is three files: `<id>.vrm`, `<id>.json` (the Model, what `GET /models` lists) and `<id>.png`. What is
@@ -149,6 +152,19 @@ export default function flairAvatar(portal: ServerPortal) {
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
     if (!name || [...name].length > NAME_MAX) return refuse(res, 400, "bad-name", `The name must be 1 to ${NAME_MAX} characters`);
     res.json({ model: keep({ ...model, name }) });
+  });
+
+  router.put("/models/:id/settings", portal.http.json(), (req, res) => {
+    const model = named(req, res);
+    if (!model) return;
+    let settings;
+    try {
+      settings = checkSettings(req.body?.settings);
+    } catch (e) {
+      if (e instanceof BadSettings) return refuse(res, 400, e.code, e.message, e.detail);
+      throw e;
+    }
+    res.json({ model: keep({ ...model, settings }) });
   });
 
   router.delete("/models/:id", (req, res) => {

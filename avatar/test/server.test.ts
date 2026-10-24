@@ -168,6 +168,61 @@ test("a model is renamed, trimmed, to 1 to 80 characters", async () => {
   assert.equal((await (await rename("é".repeat(80))).json()).model.name, "é".repeat(80));
 });
 
+test("what is set on a model is kept in its record, in place of what was, and listed with it", async () => {
+  const one = tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Set"));
+  const { model } = await (await upload(one)).json();
+  const set = (settings: unknown) => fetch(`${at}/models/${model.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings }) });
+  const record = () => JSON.parse(readFileSync(path.join(models, `${model.id}.json`), "utf8"));
+  const listed = async () => (await (await fetch(`${at}/models`)).json()).models.find((m: { id: string }) => m.id === model.id);
+
+  const saved = await set({ zoom: 1.2, gaze: "around" });
+  assert.equal(saved.status, 200);
+  assert.deepEqual((await saved.json()).model, { ...model, settings: { zoom: 1.2, gaze: "around" } });
+  assert.deepEqual(record().settings, { zoom: 1.2, gaze: "around" });
+  assert.deepEqual((await listed()).settings, { zoom: 1.2, gaze: "around" });
+  // The whole of them each time: what is not given is a default again.
+  await set({ thinkingPose: false });
+  assert.deepEqual(record().settings, { thinkingPose: false });
+
+  // A rename, and the same file uploaded again, keep them.
+  await fetch(`${at}/models/${model.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Renamed" }) });
+  assert.deepEqual(record().settings, { thinkingPose: false });
+  assert.deepEqual((await (await upload(one)).json()).model.settings, { thinkingPose: false });
+
+  await set({});
+  assert.deepEqual(record().settings, {});
+  assert.equal(record().name, "Renamed");
+});
+
+test("settings that are not ones, or out of their range, are refused naming the setting, and nothing is kept", async () => {
+  const { model } = await (await upload(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Refused")))).json();
+  const put = (body: string) => fetch(`${at}/models/${model.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body });
+  for (const [settings, detail] of [
+    [{ size: 2 }, "size"],
+    [{ zoom: 5 }, "zoom"],
+    [{ armDown: 0.1 }, "armDown"],
+    [{ brightness: "1" }, "brightness"],
+    [{ thinkingPose: "no" }, "thinkingPose"],
+    [{ gaze: "away" }, "gaze"],
+  ] as const) {
+    const answer = await put(JSON.stringify({ settings }));
+    assert.equal(answer.status, 400, JSON.stringify(settings));
+    const said = await answer.json();
+    assert.equal(said.code, "bad-settings");
+    assert.equal(said.detail, detail);
+    assert.equal(typeof said.error, "string");
+  }
+  // A body without settings as an object: no setting to name.
+  for (const body of ["{}", JSON.stringify({ settings: [] }), JSON.stringify({ settings: 3 }), JSON.stringify({ zoom: 1.2 })]) {
+    const answer = await put(body);
+    assert.equal(answer.status, 400, body);
+    const said = await answer.json();
+    assert.equal(said.code, "bad-settings");
+    assert.equal(said.detail, undefined);
+  }
+  assert.equal(JSON.parse(readFileSync(path.join(models, `${model.id}.json`), "utf8")).settings, undefined);
+});
+
 test("a model is deleted with its picture and what is kept of it", async () => {
   const { model } = await (await upload(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Gone")))).json();
   await fetch(`${at}/models/${model.id}/portrait`, { method: "PUT", body: PNG });
@@ -186,6 +241,7 @@ test("an id that is not a model's is not found, on every route", async () => {
       [`${where}/portrait`, {}],
       [`${where}/portrait`, { method: "PUT", body: PNG }],
       [where, { method: "PATCH", headers: { "content-type": "application/json" }, body: '{"name":"x"}' }],
+      [`${where}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"settings":{}}' }],
       [where, { method: "DELETE" }],
     ] as [string, RequestInit][]) {
       const answer = await fetch(url, init);
