@@ -42,6 +42,19 @@ const listed = async (request: APIRequestContext) => (await (await request.get(`
 const drawn = (page: Page) => expect(page.getByTestId("flair-avatar-preview").locator(".flair-avatar")).toHaveAttribute("data-shown", "drawn", { timeout: 30_000 });
 /** A tab of the designer by its name, with the dot's word after it or not. */
 const tab = (page: Page, name: string) => page.getByRole("tab", { name: new RegExp(`^${name}`) });
+/**
+ * The fade of the part of the tabs' panel that scrolls, or of the row of tabs, towards an end with more past it: none,
+ * or the mask's gradient, which goes to transparent at that end.
+ */
+const faded = (box: Locator) => box.evaluate((el) => {
+  const mask = getComputedStyle(el).maskImage;
+  if (mask === "none") return { start: false, end: false };
+  // Its colour stops, after its direction where it has one: the browser leaves "to bottom", the default, out.
+  const stops = mask.slice(mask.indexOf("(") + 1, -1).split(/,(?![^(]*\))/).map((stop) => stop.trim()).filter((stop) => !stop.startsWith("to "));
+  return { start: stops[0].startsWith("rgba(0, 0, 0, 0)"), end: stops.at(-1)!.startsWith("rgba(0, 0, 0, 0)") };
+});
+const scroller = (page: Page) => page.getByRole("tabpanel").locator("> div").first();
+
 /** The designer: the preview with its controls, and the tabs with their panel; the nearest that holds both. */
 const designer = (page: Page) => page.getByRole("region", { name: "Preview" }).locator("xpath=ancestor::div[.//*[@role='tablist']][1]");
 
@@ -587,6 +600,8 @@ test("beside the preview, the tabs' panel is as tall as its square whichever tab
     // What is in the tab is in the panel, scrolled inside it where it has more than fits.
     const scrolls = await panel.evaluate((p) => getComputedStyle(p.firstElementChild!).overflowY);
     expect(scrolls).toBe("auto");
+    // All of each tab is seen, so none is faded as having more under it.
+    expect(await faded(scroller(page))).toEqual({ start: false, end: false });
   }
   // The tallest tab has room without scrolling.
   await tab(page, "Motion").click();
@@ -615,6 +630,21 @@ test("on a phone the preview is over the tabs, the panel as tall as its square, 
   // (59) and the pane's padding (16 above and under).
   expect((await designer(page).boundingBox())!.height).toBeLessThanOrEqual(812 * 0.94 - 59 - 32);
   expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
+
+  // Motion has more than its panel here: the panel fades out at its foot, so what is under it is seen to be there,
+  // and at the top once it is scrolled; scrolled to the end, only there.
+  await tab(page, "Motion").click();
+  const inner = scroller(page);
+  expect(await inner.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect.poll(() => faded(inner)).toEqual({ start: false, end: true });
+  await inner.evaluate((el) => (el.scrollTop = 40));
+  await expect.poll(() => faded(inner)).toEqual({ start: true, end: true });
+  await inner.evaluate((el) => (el.scrollTop = el.scrollHeight));
+  await expect.poll(() => faded(inner)).toEqual({ start: true, end: false });
+  await expect(page.getByRole("switch", { name: "Thinking pose" })).toBeInViewport();
+  // Eyes has room: no fade.
+  await tab(page, "Eyes").click();
+  await expect.poll(() => faded(inner)).toEqual({ start: false, end: false });
 
   // With more of the page under it than the screen has room for, as on a shorter phone, the preview stays at the top
   // as the tabs and their panel scroll under it.
@@ -750,4 +780,35 @@ test("in German, all of it", async ({ page, request }) => {
   for (const each of await list.getByRole("tab").all()) expect(await each.evaluate((t) => t.scrollWidth <= t.clientWidth)).toBe(true);
   const [first, last] = [(await list.getByRole("tab").first().boundingBox())!, (await list.getByRole("tab").last().boundingBox())!];
   expect(Math.abs(first.y - last.y)).toBeLessThan(1);
+
+  // On a phone 360 pixels wide the card is 300 wide (less the dialog's margins and border and its pane's padding,
+  // 30 on each side, as the portal draws them): the six still fit, none cut, and the row has no fade.
+  const uncut = async () => {
+    expect(await list.evaluate((row) => row.scrollWidth <= row.clientWidth)).toBe(true);
+    for (const each of await list.getByRole("tab").all()) {
+      expect(await each.evaluate((t) => t.scrollWidth <= t.clientWidth)).toBe(true);
+      const [box, row] = [(await each.boundingBox())!, (await list.boundingBox())!];
+      expect(box.x).toBeGreaterThanOrEqual(row.x - 0.5);
+      expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
+    }
+    expect(await faded(list)).toEqual({ start: false, end: false });
+  };
+  await page.setViewportSize({ width: 300, height: 740 });
+  await uncut();
+  // Narrower still (a phone 320 wide), the row scrolls across: it fades where more tabs are past its edge, and a tab
+  // chosen there, half seen, is brought wholly into the row.
+  await page.setViewportSize({ width: 260, height: 640 });
+  expect(await list.evaluate((row) => row.scrollWidth > row.clientWidth)).toBe(true);
+  await expect.poll(() => faded(list)).toEqual({ start: false, end: true });
+  const arms = tab(page, "Arme");
+  // Clicked where it is, as a finger would: Playwright's own click would scroll it into view first.
+  await arms.evaluate((t: HTMLElement) => t.click());
+  await expect(arms).toHaveAttribute("aria-selected", "true");
+  await expect.poll(async () => {
+    const [box, row] = [(await arms.boundingBox())!, (await list.boundingBox())!];
+    return box.x + box.width <= row.x + row.width + 0.5;
+  }).toBe(true);
+  await expect.poll(() => faded(list)).toEqual({ start: true, end: false });
+  await page.setViewportSize({ width: 300, height: 740 });
+  await uncut();
 });

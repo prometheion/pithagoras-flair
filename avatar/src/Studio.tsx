@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode, type Ref, type RefObject } from "react";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
 import { Avatar } from "./Avatar";
 import { Licence } from "./Licence";
@@ -110,6 +110,50 @@ function shown(key: NumberKey, value: number): string {
       return percent(value);
   }
 }
+
+/**
+ * Which ends of a box that scrolls (along `axis`: x across, y down) have more of what is in it past them: `start` above
+ * or before, `end` under or after. A scroll bar on macOS and on a phone is drawn only while the box scrolls, so
+ * without a sign of it what is past the box's edge looks like the end of it; the box is faded towards an end that has
+ * more (`fade`). Measured again as the box scrolls, as it or anything in it changes size, and as `shown` changes, which
+ * is what is in it: the tab shown.
+ */
+function useClipped(box: RefObject<HTMLElement>, axis: "x" | "y", shown: unknown) {
+  const [ends, setEnds] = useState({ start: false, end: false });
+  useEffect(() => {
+    const el = box.current!;
+    const measure = () => {
+      const [at, seen, all] = axis === "x" ? [el.scrollLeft, el.clientWidth, el.scrollWidth] : [el.scrollTop, el.clientHeight, el.scrollHeight];
+      // A pixel's worth either way, as the browser rounds a scroll position that is not a whole number of pixels.
+      const start = at > 1;
+      const end = at + seen < all - 1;
+      setEnds((was) => (was.start === start && was.end === end ? was : { start, end }));
+    };
+    measure();
+    const sizes = new ResizeObserver(measure);
+    sizes.observe(el);
+    for (const child of el.children) sizes.observe(child);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      sizes.disconnect();
+      el.removeEventListener("scroll", measure);
+    };
+  }, [box, axis, shown]);
+  return ends;
+}
+
+/**
+ * The fade of a box that scrolls, towards each end of it that has more past it (`useClipped`): what is in it goes
+ * from clear to unseen over `length` there, as the portal fades the thinking that scrolls in a reply (chat.css).
+ */
+function fade(axis: "x" | "y", { start, end }: { start: boolean; end: boolean }, length: string): CSSProperties | undefined {
+  if (!start && !end) return undefined;
+  const mask = `linear-gradient(to ${axis === "x" ? "right" : "bottom"}, ${start ? `transparent, #000 ${length}` : "#000"}, ${end ? `#000 calc(100% - ${length}), transparent` : "#000"})`;
+  return { maskImage: mask, WebkitMaskImage: mask };
+}
+
+/** How far the row of tabs fades towards an end that has more tabs past it, in pixels. */
+const ROW_FADE = 20;
 
 /** A small line drawing for a button, in the button's colour. */
 const icon = (paths: ReactNode) => (
@@ -429,9 +473,12 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
  * is shown in the accent colour.
  *
  * The panel under the tabs is the preview's height (`--stage`) whichever tab is shown, and scrolls inside where a tab
- * has more than that. At its foot, outside what scrolls, is the tab's own Reset, named for the tab ("Reset Camera"):
- * it puts back what is in that tab, and is disabled while all of it is at its defaults. Once pressed it turns into
- * Undo, on that tab, until something else is changed. The labels of `ui.Segments` are passed translated: it says them
+ * has more than that, faded towards an end with more past it, as a scroll bar is not drawn on macOS or a phone until
+ * it scrolls. On a phone the row of tabs is wider than the card in German on a screen narrower than 360 pixels: it
+ * scrolls across, faded where more tabs are past its edge, and keeps the tab shown in it. At its foot, outside what
+ * scrolls, is the tab's own Reset, named for the tab ("Reset Camera"): it puts back what is in that tab, and is
+ * disabled while all of it is at its defaults. Once pressed it turns into Undo, on that tab, until something else is
+ * changed. The labels of `ui.Segments` are passed translated: it says them
  * through the portal's own texts, which do not have the extension's.
  */
 function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUndo }: {
@@ -465,9 +512,31 @@ function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUnd
     ));
   const gazeHint = GAZE.find(([id]) => id === settings.gaze)![2];
   const title = GROUPS.find(([id]) => id === tab)![1];
+  const row = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const rowClipped = useClipped(row, "x", tab);
+  const panelClipped = useClipped(scroller, "y", tab);
+  // The tab shown wholly in the row, clear of its fades, where the row is wider than the card: moved across only, so
+  // the page is not scrolled to it. The arrow keys' focus would bring it in too, but a tab clicked half seen would not.
+  useEffect(() => {
+    const list = row.current!;
+    const shown = list.querySelector<HTMLElement>('[aria-selected="true"]')!.getBoundingClientRect();
+    const box = list.getBoundingClientRect();
+    if (shown.left < box.left + ROW_FADE) list.scrollLeft -= box.left + ROW_FADE - shown.left;
+    else if (shown.right > box.right - ROW_FADE) list.scrollLeft += shown.right - (box.right - ROW_FADE);
+  }, [tab]);
   return (
     <div data-setting={t("Look and motion")}>
-      <div role="tablist" aria-label={t("Look and motion")} onKeyDown={ui.tabKeys} className="flex overflow-x-auto overflow-y-hidden border-b border-line">
+      {/* On a phone the tabs share the row's width (`flex-auto`), smaller and closer, so the six fit in German on a
+          screen 360 pixels wide; beside the preview they are the portal's size, from the left. */}
+      <div
+        ref={row}
+        role="tablist"
+        aria-label={t("Look and motion")}
+        onKeyDown={ui.tabKeys}
+        className="flex overflow-x-auto overflow-y-hidden border-b border-line"
+        style={fade("x", rowClipped, `${ROW_FADE}px`)}
+      >
         {GROUPS.map(([id, label]) => (
           <button
             key={id}
@@ -478,17 +547,22 @@ function Controls({ settings, tab, onTab, onMove, onLetGo, onSet, onReset, onUnd
             aria-controls={`${ids}-panel`}
             tabIndex={tab === id ? 0 : -1}
             onClick={() => onTab(id)}
-            className={`relative -mb-px shrink-0 border-b-2 px-2 py-1.5 text-xs transition ${tab === id ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg"}`}
+            className={`relative -mb-px flex-auto border-b-2 px-0.5 py-1.5 text-[11px] transition [@container(min-width:36rem)]:flex-none [@container(min-width:36rem)]:px-2 [@container(min-width:36rem)]:text-xs ${tab === id ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg"}`}
           >
             {t(label)}
             {/* In the tab's corner, so it takes no room in the row: the tabs stay where they are as it comes and goes. */}
-            {differs(settings, id) && <span role="img" aria-label={t("Changed")} title={t("Changed")} className="absolute right-0.5 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
+            {differs(settings, id) && <span role="img" aria-label={t("Changed")} title={t("Changed")} className="absolute right-0 top-0.5 h-1.5 w-1.5 rounded-full bg-accent" />}
           </button>
         ))}
       </div>
       <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-${tab}`} className="flex h-[var(--stage)] flex-col">
-        {/* Room at its sides for a slider's focus ring, which what scrolls would cut. */}
-        <div className="-mx-1 min-h-0 flex-1 space-y-4 overflow-y-auto px-1 pb-3 pt-3">
+        {/* Room at its sides for a slider's focus ring, which what scrolls would cut. Faded towards an end with more past
+            it, and a setting reached by Tab is brought in clear of the fade (`scroll-py`). */}
+        <div
+          ref={scroller}
+          className="-mx-1 min-h-0 flex-1 scroll-py-6 space-y-4 overflow-y-auto px-1 pb-3 pt-3"
+          style={fade("y", panelClipped, "1.5rem")}
+        >
           {tab === "motion" && reduced && (
             <p className="text-[11px] text-fg-faint">
               {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
