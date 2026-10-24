@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { tinyVrm0, tinyVrm1 } from "../tiny-vrm.ts";
 import { tinyVrma } from "../tiny-vrma.ts";
 import { sample } from "./fetch-models.ts";
-import { VIEWER_LEFT, within } from "./frame.ts";
+import { played, seen, track, VIEWER_LEFT, watchFrames, within } from "./frame.ts";
 
 /**
  * The 3D Avatar's page in Settings, on the extension's test page: the gallery of models, added from files picked or
@@ -22,6 +22,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 async function open(page: Page, request: APIRequestContext, lang = "en", reset = true) {
   if (reset) await request.post("/reset");
+  await watchFrames(page);
   await page.goto(`/?lang=${lang}`);
   await page.waitForFunction(() => (window as any).harness?.ready);
   await page.evaluate(() => (window as any).harness.settings());
@@ -614,16 +615,20 @@ test("a gesture clip is uploaded, listed by its file's name, replaced and remove
 test("Try waves in the preview, whatever state it shows", async ({ page, request }) => {
   const file = sample("twist");
   test.skip(!file, "the sample model could not be fetched");
+  test.slow();
   await open(page, request);
   await addOne(page, readFileSync(file!), "twist.vrm");
   await drawn(page);
   const preview = '[data-testid="flair-avatar-preview"] canvas';
-  // Speaking, as the preview starts: no wave of its own.
-  await page.waitForTimeout(2000);
+  // Speaking, as the preview starts: no wave of its own. Two seconds of its motion, which a slow renderer plays slowly (frame.ts).
+  await played(page, 2);
   const before = await within(page, VIEWER_LEFT, preview);
   await tab(page, "Arms").click();
+  await track(page, [VIEWER_LEFT]);
   await page.getByRole("group", { name: "Wave", exact: true }).getByRole("button", { name: "Try" }).click();
-  await expect.poll(() => within(page, VIEWER_LEFT, preview), { timeout: 30_000, intervals: [200] }).toBeGreaterThan(before + 1000);
+  // Every frame of a second of it, from the press.
+  await played(page, 1);
+  expect(Math.max(...(await seen(page)).map((f) => f.covered[0]))).toBeGreaterThan(before + 1000);
 });
 
 test("a refused save is said over the page, and the controls show what is saved again", async ({ page, request }) => {
