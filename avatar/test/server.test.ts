@@ -154,6 +154,31 @@ test("a portrait is a PNG of at most 1 MiB, kept with the model and served", asy
   assert.equal(big.body.code, "too-large");
 });
 
+test("a portrait sent while the model is changed keeps the change, and one sent while it is deleted does not bring it back", async () => {
+  const { model } = await (await upload(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Slow")))).json();
+  const record = path.join(models, `${model.id}.json`);
+  // The picture's first bytes, a change made while the rest is still on its way, then the rest.
+  const slowly = (meanwhile: () => Promise<Response>) =>
+    raw({ method: "PUT", path: `/x/models/${model.id}/portrait`, headers: { "content-type": "image/png", "transfer-encoding": "chunked" } }, async (req) => {
+      req.write(PNG.subarray(0, 4));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal((await meanwhile()).status, 200);
+      req.end(PNG.subarray(4));
+    });
+
+  const painted = await slowly(() => fetch(`${at}/models/${model.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings: { zoom: 1.3 } }) }));
+  assert.equal(painted.status, 200);
+  assert.deepEqual(painted.body.model.settings, { zoom: 1.3 });
+  const kept = JSON.parse(readFileSync(record, "utf8"));
+  assert.deepEqual(kept.settings, { zoom: 1.3 });
+  assert.equal(kept.portrait, painted.body.model.portrait);
+
+  const gone = await slowly(() => fetch(`${at}/models/${model.id}`, { method: "DELETE" }));
+  assert.equal(gone.status, 404);
+  assert.equal(gone.body.code, "not-found");
+  assert.deepEqual(readdirSync(models).filter((name) => name.startsWith(model.id)), []);
+});
+
 test("a model is renamed, trimmed, to 1 to 80 characters", async () => {
   const { model } = await (await upload(tinyVrm1())).json();
   const rename = (name: unknown) => fetch(`${at}/models/${model.id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) });

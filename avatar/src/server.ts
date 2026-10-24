@@ -140,8 +140,12 @@ export default function flairAvatar(portal: ServerPortal) {
     if (!(await readBody(req, PORTRAIT_MAX, (chunk) => chunks.push(chunk)))) return tooLarge(res, "The portrait is larger than 1 MiB");
     const png = Buffer.concat(chunks);
     if (!png.subarray(0, PNG.length).equals(PNG)) return refuse(res, 400, "not-png", "The portrait is not a PNG");
+    // Read again now that the body is in: what was saved of the model meanwhile (its settings, its name) is kept, and
+    // a model deleted meanwhile is not brought back without its file.
+    const now = kept(model.id);
+    if (!now) return refuse(res, 404, "not-found", "There is no such model");
     put(where(model.id, "png"), png);
-    res.json({ model: keep({ ...model, portrait: new Date().toISOString() }) });
+    res.json({ model: keep({ ...now, portrait: new Date().toISOString() }) });
   });
 
   router.get("/models/:id/portrait", (req, res) => send(req, res, "png"));
