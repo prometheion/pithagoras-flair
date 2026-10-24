@@ -5,7 +5,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import { DEFAULT_SETTINGS, type ModelSettings } from "../src/model-settings.ts";
 import { createMotion, type MotionInput } from "../src/motion.ts";
-import { aim, COOL, framed, lighting, pose, rest, WARM } from "../src/stage.ts";
+import { aim, COOL, DRAW_VERSION, framed, lighting, portraitStamp, pose, rest, WARM } from "../src/stage.ts";
 import { tinyVrm0, tinyVrm1 } from "./tiny-vrm.ts";
 
 /**
@@ -215,4 +215,15 @@ test("the lights are white at their usual strength at the defaults, stronger wit
   set({ warmth: -1 }).color.forEach((c, i) => near(c, colour(COOL)[i], 1e-9, `cool, channel ${i}`));
   set({ warmth: 0.5 }).color.forEach((c, i) => near(c, (1 + colour(WARM)[i]) / 2, 1e-9, `halfway, channel ${i}`));
   set({ warmth: -0.5 }).color.forEach((c, i) => near(c, (1 + colour(COOL)[i]) / 2, 1e-9, `halfway, channel ${i}`));
+});
+
+test("a portrait's stamp is the version of the drawing and the settings that show at rest, and none of the others", () => {
+  const usual = portraitStamp(DEFAULT_SETTINGS);
+  assert.ok(usual.startsWith(`${DRAW_VERSION}:`), usual);
+  for (const [key, value] of [["zoom", 1.2], ["height", 0.03], ["brightness", 1.1], ["warmth", -0.2], ["armDown", 1.0]] as const) {
+    assert.notEqual(portraitStamp({ ...DEFAULT_SETTINGS, [key]: value }), usual, key);
+  }
+  for (const [key, value] of [["motion", 0.5], ["breathing", 2], ["blinkRate", 2], ["lean", 0], ["thinkingPose", false], ["gaze", "around"], ["mouth", 2]] as const) {
+    assert.equal(portraitStamp({ ...DEFAULT_SETTINGS, [key]: value }), usual, key);
+  }
 });

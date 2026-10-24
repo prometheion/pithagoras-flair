@@ -18,6 +18,19 @@ import { portal } from "./portal";
  */
 export type Shown = "loading" | "drawn" | "lost" | "failed" | "unsupported";
 
+/**
+ * The version of how a model is drawn at rest in the face framing, which is what its portrait shows. Raise it with any
+ * change to this module or motion.ts that changes that picture (how the file is read, the lights, the framing, the
+ * rest pose, the eyes): every portrait made before then counts as old, and the Settings page makes it again.
+ */
+export const DRAW_VERSION = 1;
+
+/**
+ * What a portrait is drawn with, kept with it (`portraitStamp` of the model): the version of the drawing, and the
+ * settings that show in it, framing, lights and the arms at rest. A string to compare, that says what it was made with.
+ */
+export const portraitStamp = ({ zoom, height, brightness, warmth, armDown }: ModelSettings) => `${DRAW_VERSION}:${JSON.stringify([zoom, height, brightness, warmth, armDown])}`;
+
 /** The canvas is larger than the box by 3/14 of the box on each side, as the orb's is, so the model is not cut at its edge. */
 const OVERSCAN = 10 / 7;
 /** From this size of the box up, in CSS pixels, a bust is drawn; below, the face. */

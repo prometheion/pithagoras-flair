@@ -11,6 +11,8 @@ import { checkVrm, modelName, NAME_MAX, Refused } from "./vrm-file";
 export const UPLOAD_MAX = 64 * 1024 * 1024;
 /** The largest portrait taken: a 256-pixel PNG is far smaller. */
 const PORTRAIT_MAX = 1024 * 1024;
+/** The longest stamp a portrait is kept with: what it was drawn with (`portraitStamp` in stage.ts). */
+const STAMP_MAX = 200;
 /** What every PNG starts with. */
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 /** A model's id: the sha256 of its file, in hex. */
@@ -28,7 +30,9 @@ const STALE_MS = 60_000;
  *                                model (vrm-file.ts) and kept by its sha256, so the same file is one model. 201 and
  *                                { model } for a new one, 200 and the model there already for one uploaded before
  *   GET    /models/:id/file      the model's file, cached for good: its address is its content's hash
- *   PUT    /models/:id/portrait  a PNG, at most 1 MiB: the picture the Agents page shows (the Settings page makes it)
+ *   PUT    /models/:id/portrait?stamp=<what it was drawn with>
+ *                                a PNG, at most 1 MiB: the picture the Agents page shows (the Settings page makes it),
+ *                                kept with its stamp, 1 to 200 characters
  *   GET    /models/:id/portrait  that picture
  *   PATCH  /models/:id           { name }: a new name, 1 to 80 characters
  *   PUT    /models/:id/settings  { settings }: what is set on the model (model-settings.ts), checked, in place of what
@@ -136,6 +140,8 @@ export default function flairAvatar(portal: ServerPortal) {
   router.put("/models/:id/portrait", async (req, res) => {
     const model = named(req, res);
     if (!model) return;
+    const stamp = typeof req.query.stamp === "string" ? req.query.stamp : "";
+    if (!stamp || stamp.length > STAMP_MAX) return refuse(res, 400, "bad-stamp", `The portrait's stamp must be 1 to ${STAMP_MAX} characters`);
     const chunks: Buffer[] = [];
     if (!(await readBody(req, PORTRAIT_MAX, (chunk) => chunks.push(chunk)))) return tooLarge(res, "The portrait is larger than 1 MiB");
     const png = Buffer.concat(chunks);
@@ -145,7 +151,7 @@ export default function flairAvatar(portal: ServerPortal) {
     const now = kept(model.id);
     if (!now) return refuse(res, 404, "not-found", "There is no such model");
     put(where(model.id, "png"), png);
-    res.json({ model: keep({ ...now, portrait: new Date().toISOString() }) });
+    res.json({ model: keep({ ...now, portrait: new Date().toISOString(), portraitStamp: stamp }) });
   });
 
   router.get("/models/:id/portrait", (req, res) => send(req, res, "png"));

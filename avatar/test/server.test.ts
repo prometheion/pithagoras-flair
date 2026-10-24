@@ -35,6 +35,8 @@ const upload = (bytes: Uint8Array<ArrayBuffer>, name = "tiny.vrm") =>
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const parts = () => readdirSync(models).filter((name) => name.endsWith(".part"));
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+/** What a portrait is said to be drawn with, as the page says it. */
+const STAMP = encodeURIComponent('1:[1,0,1,0,1.2]');
 
 /** A request made by hand, for a body the fetch API will not send: its status and what it answered. */
 function raw(options: http.RequestOptions, write: (req: http.ClientRequest) => void): Promise<{ status: number; body: any }> {
@@ -130,13 +132,15 @@ test("a model's file is served as a glTF binary, cached for good", async () => {
   assert.deepEqual(new Uint8Array(await answer.arrayBuffer()), one);
 });
 
-test("a portrait is a PNG of at most 1 MiB, kept with the model and served", async () => {
+test("a portrait is a PNG of at most 1 MiB, kept with the model with what it was drawn with, and served", async () => {
   const { model } = await (await upload(tinyVrm1())).json();
-  const put = (body: Uint8Array<ArrayBuffer>) => fetch(`${at}/models/${model.id}/portrait`, { method: "PUT", headers: { "content-type": "image/png" }, body });
+  const put = (body: Uint8Array<ArrayBuffer>, stamp = STAMP) => fetch(`${at}/models/${model.id}/portrait?stamp=${stamp}`, { method: "PUT", headers: { "content-type": "image/png" }, body });
   const saved = await put(PNG);
   assert.equal(saved.status, 200);
   const { model: painted } = await saved.json();
   assert.ok(Date.parse(painted.portrait) >= Date.parse(model.added));
+  assert.equal(painted.portraitStamp, "1:[1,0,1,0,1.2]");
+  assert.equal(JSON.parse(readFileSync(path.join(models, `${model.id}.json`), "utf8")).portraitStamp, "1:[1,0,1,0,1.2]");
   const got = await fetch(`${at}/models/${model.id}/portrait`);
   assert.equal(got.headers.get("content-type"), "image/png");
   assert.equal(got.headers.get("cache-control"), "private, no-cache");
@@ -147,9 +151,17 @@ test("a portrait is a PNG of at most 1 MiB, kept with the model and served", asy
   const notPng = await put(new TextEncoder().encode("GIF89a"));
   assert.equal(notPng.status, 400);
   assert.equal((await notPng.json()).code, "not-png");
+  // Without what it was drawn with, or with more than a stamp is.
+  for (const stamp of ["", "x".repeat(201)]) {
+    const answer = await put(PNG, stamp);
+    assert.equal(answer.status, 400, `a stamp of ${stamp.length}`);
+    assert.equal((await answer.json()).code, "bad-stamp");
+  }
+  assert.equal((await fetch(`${at}/models/${model.id}/portrait`, { method: "PUT", body: PNG })).status, 400, "no stamp at all");
+  assert.equal((await (await put(PNG, "y".repeat(200))).json()).model.portraitStamp, "y".repeat(200));
   // By what its request says, sent by hand: fetch, still sending the picture, at times meets the closed connection
   // before it reads the answer.
-  const big = await raw({ method: "PUT", path: `/x/models/${model.id}/portrait`, headers: { "content-type": "image/png", "content-length": 1024 * 1024 + 1 } }, (req) => req.flushHeaders());
+  const big = await raw({ method: "PUT", path: `/x/models/${model.id}/portrait?stamp=${STAMP}`, headers: { "content-type": "image/png", "content-length": 1024 * 1024 + 1 } }, (req) => req.flushHeaders());
   assert.equal(big.status, 413);
   assert.equal(big.body.code, "too-large");
 });
@@ -159,7 +171,7 @@ test("a portrait sent while the model is changed keeps the change, and one sent 
   const record = path.join(models, `${model.id}.json`);
   // The picture's first bytes, a change made while the rest is still on its way, then the rest.
   const slowly = (meanwhile: () => Promise<Response>) =>
-    raw({ method: "PUT", path: `/x/models/${model.id}/portrait`, headers: { "content-type": "image/png", "transfer-encoding": "chunked" } }, async (req) => {
+    raw({ method: "PUT", path: `/x/models/${model.id}/portrait?stamp=${STAMP}`, headers: { "content-type": "image/png", "transfer-encoding": "chunked" } }, async (req) => {
       req.write(PNG.subarray(0, 4));
       await new Promise((resolve) => setTimeout(resolve, 100));
       assert.equal((await meanwhile()).status, 200);
@@ -172,6 +184,7 @@ test("a portrait sent while the model is changed keeps the change, and one sent 
   const kept = JSON.parse(readFileSync(record, "utf8"));
   assert.deepEqual(kept.settings, { zoom: 1.3 });
   assert.equal(kept.portrait, painted.body.model.portrait);
+  assert.equal(kept.portraitStamp, "1:[1,0,1,0,1.2]");
 
   const gone = await slowly(() => fetch(`${at}/models/${model.id}`, { method: "DELETE" }));
   assert.equal(gone.status, 404);
@@ -250,7 +263,7 @@ test("settings that are not ones, or out of their range, are refused naming the 
 
 test("a model is deleted with its picture and what is kept of it", async () => {
   const { model } = await (await upload(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Gone")))).json();
-  await fetch(`${at}/models/${model.id}/portrait`, { method: "PUT", body: PNG });
+  assert.equal((await fetch(`${at}/models/${model.id}/portrait?stamp=${STAMP}`, { method: "PUT", body: PNG })).status, 200);
   const gone = await fetch(`${at}/models/${model.id}`, { method: "DELETE" });
   assert.deepEqual(await gone.json(), { ok: true });
   assert.deepEqual(readdirSync(models).filter((name) => name.startsWith(model.id)), []);
@@ -264,7 +277,7 @@ test("an id that is not a model's is not found, on every route", async () => {
     for (const [url, init] of [
       [`${where}/file`, {}],
       [`${where}/portrait`, {}],
-      [`${where}/portrait`, { method: "PUT", body: PNG }],
+      [`${where}/portrait?stamp=${STAMP}`, { method: "PUT", body: PNG }],
       [where, { method: "PATCH", headers: { "content-type": "application/json" }, body: '{"name":"x"}' }],
       [`${where}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"settings":{}}' }],
       [where, { method: "DELETE" }],

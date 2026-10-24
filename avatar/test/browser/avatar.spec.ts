@@ -255,13 +255,13 @@ test("a still avatar makes no drawing context: the orb until the model has a por
   const [model] = await open(page, request);
   await mount(page, { entry: model.id, still: true });
   await orbShown(page);
-  await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
+  await request.put(`${API}/models/${model.id}/portrait?stamp=1`, { data: PNG, headers: { "content-type": "image/png" } });
   await refresh(page);
   const still = page.locator(".flair-avatar-still");
   await expect(still).toBeVisible();
   await expect(page.getByTestId("orb")).toHaveCount(0);
   const first = await still.getAttribute("src");
-  await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
+  await request.put(`${API}/models/${model.id}/portrait?stamp=1`, { data: PNG, headers: { "content-type": "image/png" } });
   await refresh(page);
   await expect(still).not.toHaveAttribute("src", first!);
   expect((await counted(page)).context).toBe(0);
@@ -297,7 +297,7 @@ test("an entry is registered again for a rename, and not for new settings or a n
   await page.evaluate(() => ((window as any).before = (window as any).harness.registered()));
   const same = () => page.evaluate(() => (window as any).harness.registered().every((e: unknown, i: number) => e === (window as any).before[i]));
   await request.put(`${API}/models/${model.id}/settings`, { data: { settings: { zoom: 1.2 } } });
-  await request.put(`${API}/models/${model.id}/portrait`, { data: PNG, headers: { "content-type": "image/png" } });
+  await request.put(`${API}/models/${model.id}/portrait?stamp=1`, { data: PNG, headers: { "content-type": "image/png" } });
   await refresh(page);
   // The list read, and what it changed drawn.
   await page.waitForTimeout(300);

@@ -2,9 +2,10 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import type { ApiError, AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
 import { Avatar } from "./Avatar";
 import type { Model } from "./model";
+import { withDefaults } from "./model-settings";
 import { refreshModels } from "./models";
 import { msg, portal, t } from "./portal";
-import { makePortrait, type Shown } from "./stage";
+import { makePortrait, portraitStamp, type Shown } from "./stage";
 
 /** The preview's states, in the words of the portal's own Avatar dialog. */
 const STATES: [AvatarMode, string][] = [
@@ -16,7 +17,8 @@ const api = {
   // The file as it is: `api.json` merges its headers over its JSON default.
   upload: (file: File) =>
     portal.api.json<{ model: Model }>(portal.api.url(`/models?name=${encodeURIComponent(file.name)}`), { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file }),
-  portrait: (id: string, png: Blob) => portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/portrait`), { method: "PUT", headers: { "Content-Type": "image/png" }, body: png }),
+  portrait: (id: string, png: Blob, stamp: string) =>
+    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/portrait?stamp=${encodeURIComponent(stamp)}`), { method: "PUT", headers: { "Content-Type": "image/png" }, body: png }),
   rename: (id: string, name: string) => portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}`), { method: "PATCH", body: JSON.stringify({ name }) }),
   remove: (id: string) => portal.api.json(portal.api.url(`/models/${id}`), { method: "DELETE" }),
 };
@@ -38,8 +40,11 @@ function refusal(e: unknown): string {
  * a live preview of the one chosen, in the five states voice mode shows. An agent is given a model in its own Avatar
  * dialog, which lists them beside the orb.
  *
- * The picture of a model that an agent's card shows is made here, in this browser, after the model is added, and for
- * any model without one when the page is opened: one at a time, each with a drawing context of its own for a moment.
+ * The picture of a model that an agent's card shows is made here, in this browser, for each model whose picture is not
+ * what it would draw now (`portraitStamp`: one made before its settings changed, or before a change to how models are
+ * drawn, or none yet): when the page is opened, after a model is added and after its settings are saved. One at a
+ * time, each with a drawing context of its own for a moment, and from the latest list after each, so a run of changes
+ * ends in one picture of the last. The Agents page makes none: it uses no drawing context.
  */
 export function Settings() {
   portal.locale.use();
@@ -50,39 +55,55 @@ export function Settings() {
   const [uploading, setUploading] = useState(false);
   const [chosen, setChosen] = useState<string>();
   const file = useRef<HTMLInputElement>(null);
-  // Portraits asked for while the page is open, so none is made twice.
-  const painting = useRef(new Set<string>());
+  // The latest list read, which the portraits are made from, and each list asked for: an answer that comes after a
+  // later one's is not used, or a portrait due for the later one would not be seen.
+  const latest = useRef<Model[]>([]);
+  const asked = useRef(0);
+  // Whether portraits are being made now: one run at a time, which reads the latest list after each.
+  const painting = useRef(false);
+  // The models that could not be drawn, each with the stamp it was tried with: tried once while the page is open.
+  const undrawable = useRef(new Set<string>());
 
   // The list again, and the entries offered as avatars with it.
   const reload = useCallback(async () => {
+    const mine = ++asked.current;
     const listed = await api.list();
-    setModels(listed);
+    if (mine === asked.current) {
+      latest.current = listed;
+      setModels(listed);
+    }
     void refreshModels();
-    return listed;
   }, []);
-  const paint = useCallback(
-    async (listed: Model[]) => {
-      for (const model of listed) {
-        if (model.portrait || painting.current.has(model.id)) continue;
-        painting.current.add(model.id);
+  const paint = useCallback(async () => {
+    if (painting.current) return;
+    painting.current = true;
+    try {
+      for (;;) {
+        const due = latest.current
+          .map((model) => ({ model, stamp: portraitStamp(withDefaults(model.settings)) }))
+          .find(({ model, stamp }) => model.portraitStamp !== stamp && !undrawable.current.has(`${model.id}|${stamp}`));
+        if (!due) return;
         try {
-          await api.portrait(model.id, await makePortrait(model));
+          await api.portrait(due.model.id, await makePortrait(due.model), due.stamp);
         } catch (e) {
-          // A model that cannot be drawn has no portrait: its preview says so, and its cards show the orb.
-          console.warn(`3D Avatar: no portrait of ${model.name}`, e);
+          // Not tried again with these settings while the page is open: its preview says why it cannot be drawn.
+          console.warn(`3D Avatar: no portrait of ${due.model.name}`, e);
+          undrawable.current.add(`${due.model.id}|${due.stamp}`);
           continue;
         }
         await reload();
       }
-    },
-    [reload],
-  );
+    } finally {
+      painting.current = false;
+    }
+  }, [reload]);
   const load = useCallback(() => {
     setLoadFailed(undefined);
     api.list().then(
       (listed) => {
+        latest.current = listed;
         setModels(listed);
-        void paint(listed);
+        void paint();
       },
       (e) => setLoadFailed((e as Error).message),
     );
@@ -109,7 +130,8 @@ export function Settings() {
       try {
         const { model } = await api.upload(picked);
         setChosen(model.id);
-        void paint(await reload());
+        await reload();
+        void paint();
       } finally {
         setUploading(false);
         if (file.current) file.current.value = "";

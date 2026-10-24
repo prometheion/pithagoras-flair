@@ -1,4 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { DEFAULT_SETTINGS } from "../../src/model-settings.ts";
+import { portraitStamp } from "../../src/stage.ts";
 import { tinyVrm1 } from "../tiny-vrm.ts";
 
 /**
@@ -7,19 +9,25 @@ import { tinyVrm1 } from "../tiny-vrm.ts";
  * and all of it in German.
  */
 
-async function open(page: Page, request: APIRequestContext, lang = "en") {
-  await request.post("/reset");
+const API = "/api/x/%40pithagoras/flair-avatar";
+// A 1-pixel PNG, for a portrait.
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAAAJRU5ErkJggg==", "base64");
+
+async function open(page: Page, request: APIRequestContext, lang = "en", reset = true) {
+  if (reset) await request.post("/reset");
   await page.goto(`/?lang=${lang}`);
   await page.waitForFunction(() => (window as any).harness?.ready);
   await page.evaluate(() => (window as any).harness.settings());
 }
 const add = (page: Page, buffer: Buffer, name = "tiny.vrm") => page.getByTestId("flair-avatar-file").setInputFiles({ name, mimeType: "application/octet-stream", buffer });
 const row = (page: Page) => page.locator("li[data-model]");
+/** A portrait the page sends, with what it says it was drawn with. */
+const painted = (page: Page) => page.waitForRequest((r) => r.method() === "PUT" && new URL(r.url()).pathname.endsWith("/portrait"));
 
 test("a model is added from its file, listed with what its licence says, previewed, and given a portrait", async ({ page, request }) => {
   await open(page, request);
   await expect(page.getByTestId("empty")).toHaveText("No models yet.");
-  const portrait = page.waitForRequest((r) => r.method() === "PUT" && r.url().endsWith("/portrait"));
+  const portrait = painted(page);
   await add(page, Buffer.from(tinyVrm1()));
   await expect(row(page)).toHaveCount(1);
   const listed = row(page).first();
@@ -40,6 +48,7 @@ test("a model is added from its file, listed with what its licence says, preview
 
   // The portrait, made in this browser and kept by the server half, is the row's picture.
   expect((await portrait).headers()["content-type"]).toBe("image/png");
+  expect(new URL((await portrait).url()).searchParams.get("stamp")).toBe(portraitStamp(DEFAULT_SETTINGS));
   await expect(listed.locator("img")).toBeVisible();
 
   const preview = page.getByTestId("flair-avatar-preview");
@@ -105,4 +114,23 @@ test("in German, all of it", async ({ page, request }) => {
   }
   await expect(listed.getByRole("button")).toHaveText(["Vorschau", "Umbenennen", "Löschen"]);
   await expect(page.getByRole("group", { name: "Vorschauzustand" }).getByRole("button")).toHaveText(["Ruhend", "Hört zu", "Spricht", "Denkt nach", "Stumm"]);
+});
+
+test("a portrait made before the drawing changed is made again when the page is opened, and a current one is not", async ({ page, request }) => {
+  await request.post("/reset");
+  const added = await request.post(`${API}/models?name=tiny.vrm`, { data: Buffer.from(tinyVrm1()), headers: { "content-type": "application/octet-stream" } });
+  const { model } = await added.json();
+  // As an older version of the drawing stamped it.
+  await request.put(`${API}/models/${model.id}/portrait?stamp=0:old`, { data: PNG, headers: { "content-type": "image/png" } });
+  const portrait = painted(page);
+  await open(page, request, "en", false);
+  expect(new URL((await portrait).url()).searchParams.get("stamp")).toBe(portraitStamp(DEFAULT_SETTINGS));
+  await expect.poll(async () => (await (await request.get(`${API}/models`)).json()).models[0].portraitStamp).toBe(portraitStamp(DEFAULT_SETTINGS));
+
+  // Opened again, nothing is due.
+  let sent = 0;
+  page.on("request", (r) => r.method() === "PUT" && new URL(r.url()).pathname.endsWith("/portrait") && sent++);
+  await open(page, request, "en", false);
+  await page.waitForTimeout(3000);
+  expect(sent).toBe(0);
 });
