@@ -97,22 +97,33 @@ export function Settings() {
   // Where the focus goes once the list is drawn again: a model's card, or the Add button.
   const focusNext = useRef<string>();
   // The latest list read, which the portraits are made from, and each list asked for: an answer that comes after a
-  // later one's is not used, or a portrait due for the later one would not be seen.
+  // later one's is not used, or a portrait due for the later one would not be seen. The last one asked for, until it
+  // is in.
   const latest = useRef<Model[]>([]);
   const asked = useRef(0);
+  const reading = useRef<Promise<void>>();
   // Whether portraits are being made now: one run at a time, which reads the latest list after each.
   const painting = useRef(false);
   const failed = useRef(new Set<string>());
 
   // The list again after a change, and the entries offered as avatars with it, here and on the portal's other pages.
-  const reload = useCallback(async () => {
+  // Done once the page has a list read after the change: its own, or, when another was asked for while it was on its
+  // way (a portrait's, made meanwhile), that one, which is used in its place and has the change too. A save's controls
+  // show the list once the save is done, and with the list from before it still in, a slider would go back to the value
+  // before the save until the later one came, and a key pressed then would step from there.
+  const reload = useCallback(() => {
     const mine = ++asked.current;
-    const listed = await api.list();
-    if (mine === asked.current) {
-      latest.current = listed;
-      setModels(listed);
-    }
-    void modelsChanged();
+    const read = api.list().then(async (listed) => {
+      const used = mine === asked.current;
+      if (used) {
+        latest.current = listed;
+        setModels(listed);
+      }
+      void modelsChanged();
+      if (!used) await reading.current;
+    });
+    reading.current = read;
+    return read;
   }, []);
   const paint = useCallback(async () => {
     if (painting.current) return;

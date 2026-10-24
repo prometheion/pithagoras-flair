@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Locator, type Page, type Request } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import { DEFAULT_SETTINGS } from "../../src/model-settings.ts";
 import { DRAW_VERSION, portraitStamp } from "../../src/stage.ts";
 import { tinyVrm0, tinyVrm1 } from "../tiny-vrm.ts";
@@ -338,6 +338,48 @@ test("a slider set as a screen reader sets it, with no key, pointer or focus, is
   await page.mouse.up();
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.3, height: 0.1 });
   expect(sent).toHaveLength(2);
+});
+
+test("a key pressed while a save's list waits behind a portrait's steps from what was saved, and what is saved is what is shown", async ({ page, request }) => {
+  await open(page, request);
+  // The new model's portrait is held, and each list asked for once the slider is changed, so their answers come in the
+  // order a slow machine can give them: the save's list asked for, the portrait's after it, and the save's answered first.
+  let portrait: Route | undefined;
+  await page.route((url) => url.pathname.endsWith("/portrait"), (route) => {
+    if (route.request().method() === "PUT" && !portrait) portrait = route;
+    else void route.continue();
+  });
+  const lists: Route[] = [];
+  let holding = false;
+  await page.route((url) => url.pathname.endsWith("/models"), (route) => {
+    if (holding && route.request().method() === "GET") lists.push(route);
+    else void route.continue();
+  });
+  const made = page.waitForRequest(isPortrait);
+  await addOne(page, Buffer.from(tinyVrm1()));
+  await made;
+  await expect.poll(() => portrait).toBeDefined();
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.00×");
+  holding = true;
+  await zoom.focus();
+  await zoom.press("ArrowRight");
+  await expect.poll(() => lists.length).toBe(1);
+  await portrait!.continue();
+  await expect.poll(() => lists.length).toBe(2);
+  await lists[0].continue();
+  // The save's answer is taken in once the avatars' list is asked for after it (modelsChanged), and what it changed is
+  // drawn in the frames after that.
+  await expect.poll(() => lists.length).toBe(3);
+  await page.evaluate(() => new Promise((drawn) => requestAnimationFrame(() => requestAnimationFrame(drawn))));
+  // Not the list from before the save, which the next key would step from.
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.05×");
+  await zoom.press("ArrowRight");
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.10×");
+  holding = false;
+  for (const list of lists.slice(1)) await list.continue();
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.1 });
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.10×");
 });
 
 test("each slider says its value as it is shown, and the switch and the choices save at once", async ({ page, request }) => {
