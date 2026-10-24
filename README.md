@@ -20,7 +20,7 @@ An extension here is built like any Pithagoras extension, against [`@pithagoras/
 
 Each extension is a folder of its own and an npm workspace of this repository, published as a package of its own (`npm publish -w <folder>`). A git install cannot reach one: pi installs the whole repository from its root, and the root is an empty package (`"pi": {}`), so installing `git:github.com/thecodacus/pithagoras-flair` by mistake adds nothing and breaks nothing.
 
-A release of the 3D Avatar is a tag, `avatar-v<version>`, matching the version in `avatar/package.json`. Its workflow (`.github/workflows/release.yml`) builds and unit-tests it, publishes the package to npm through npm's trusted publishing, with no token, and makes the GitHub release. The first version of a package is published by hand, as only a package that is there can be given a trusted publisher; the workflow's header says how.
+A release of the 3D Avatar is a tag, `avatar-v<version>`, matching the version in `avatar/package.json`. Its workflow (`.github/workflows/avatar-release.yml`) builds and unit-tests it, publishes the package to npm through npm's trusted publishing, with no token, and makes the GitHub release. The first version of a package is published by hand, as only a package that is there can be given a trusted publisher; the workflow's header says how.
 
 ## License
 

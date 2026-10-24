@@ -10,7 +10,7 @@
 #    variable NPM_STAGE "true" (the repository's or the organization's), the version is staged (`npm stage publish`)
 #    and published once a maintainer approves it with 2FA on npmjs.com.
 # 3. The GitHub release for the tag.
-name: Release
+name: Avatar release
 
 on:
   push:
