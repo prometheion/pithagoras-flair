@@ -7,7 +7,7 @@ import { withDefaults, type ModelSettings } from "./model-settings";
 import { modelsChanged } from "./models";
 import { msg, portal, t } from "./portal";
 import { makePortrait, portraitStamp } from "./stage";
-import { Studio } from "./Studio";
+import { Studio, type Group } from "./Studio";
 
 const api = {
   list: () => portal.api.json<{ models: Model[] }>(portal.api.url("/models")).then((answer) => answer.models),
@@ -17,8 +17,9 @@ const api = {
   portrait: (id: string, png: Blob, stamp: string) =>
     portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/portrait?stamp=${encodeURIComponent(stamp)}`), { method: "PUT", headers: { "Content-Type": "image/png" }, body: png }),
   rename: (id: string, name: string) => portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}`), { method: "PATCH", body: JSON.stringify({ name }) }),
-  settings: (id: string, settings: Partial<ModelSettings>) =>
-    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/settings`), { method: "PUT", body: JSON.stringify({ settings }) }),
+  // As the page is closed, kept alive past it.
+  settings: (id: string, settings: Partial<ModelSettings>, leaving = false) =>
+    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/settings`), { method: "PUT", body: JSON.stringify({ settings }), keepalive: leaving }),
   remove: (id: string) => portal.api.json(portal.api.url(`/models/${id}`), { method: "DELETE" }),
   clip: (id: string, gesture: ClipGesture, file: File) =>
     portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/clips/${gesture}?name=${encodeURIComponent(file.name)}`), {
@@ -99,6 +100,8 @@ export function Settings() {
   // The file being uploaded, by its name.
   const [uploading, setUploading] = useState<string>();
   const [chosen, setChosen] = useState<string>();
+  // The designer's tab shown, kept as another model is chosen: what is set is the same for each.
+  const [tab, setTab] = useState<Group>("camera");
   const [dragging, setDragging] = useState(false);
   // What a screen reader is told once a model is added.
   const [said, setSaid] = useState("");
@@ -362,6 +365,8 @@ export function Settings() {
         <Studio
           key={previewed.id}
           model={previewed}
+          tab={tab}
+          onTab={setTab}
           previewRef={preview}
           onRename={(name) =>
             run(async () => {
@@ -377,6 +382,7 @@ export function Settings() {
               void paint();
             })
           }
+          onLeave={(settings) => void api.settings(previewed.id, settings, true).catch(() => undefined)}
           onClip={(gesture, picked) =>
             void run(async () => {
               await api.clip(previewed.id, gesture, picked);

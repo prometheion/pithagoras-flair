@@ -14,8 +14,8 @@ export const de: Record<string, string> = {
   "Added {name}.": "{name} hinzugefügt.",
   "A VRM Animation file (.vrma) uploaded here plays in place of the built-in gesture. Try shows it in the preview.":
     "Eine hier hochgeladene VRM-Animationsdatei (.vrma) wird statt der eingebauten Geste abgespielt. Ausprobieren zeigt sie in der Vorschau.",
-  "All of its own movement: breathing, sway, eye movement, nodding, leaning in, the thinking pose and its gestures. It blinks and speaks either way.":
-    "Alle eigenen Bewegungen: Atmen, Wiegen, Augenbewegungen, Nicken, Vorbeugen, die Denkpose und die Gesten. Blinzeln und Sprechen bleiben in jedem Fall.",
+  "All of its own movement: breathing, sway, eye movement, nodding, leaning in, thinking pose, gestures. It blinks and speaks either way.":
+    "Alle eigenen Bewegungen: Atmen, Wiegen, Augenbewegungen, Nicken, Vorbeugen, Denkpose, Gesten. Blinzeln und Sprechen bleiben in jedem Fall.",
   "Allowed": "Erlaubt",
   "Arm angle": "Armwinkel",
   "Arms": "Arme",
@@ -35,6 +35,7 @@ export const de: Record<string, string> = {
     "Von VRoid Project. VRM 1.0, 20 MB. VRM Public License 1.0: kommerzielle Nutzung erlaubt, keine Namensnennung nötig, darf weitergegeben werden. Zusätzlich gelten VRoids eigene Bedingungen für seine Beispielmodelle.",
   "Camera": "Kamera",
   "Cannot be drawn": "Kann nicht gezeigt werden",
+  "Changed": "Geändert",
   "Choose a .vrm file, or drop one here": "Wähle eine .vrm-Datei oder lege eine hier ab",
   "Commercial use": "Kommerzielle Nutzung",
   "Commercial use allowed": "Kommerzielle Nutzung erlaubt",
@@ -60,13 +61,13 @@ export const de: Record<string, string> = {
   "Gesture clips": "Gestenclips",
   "Gestures": "Gesten",
   "Hand to the chin": "Hand ans Kinn",
+  "Hands and head on stressed words, nods as you talk, the wave, the hand to the chin, shifts of weight.":
+    "Hände und Kopf bei betonten Wörtern, Nicken, während du sprichst, Winken, Hand ans Kinn, Gewichtsverlagerung.",
   "Height": "Höhe",
   "How close the camera is.": "Wie nah die Kamera ist.",
   "How far it leans towards you while you talk.": "Wie weit es sich zu dir beugt, während du sprichst.",
   "How far the arms come down from the T-pose. Change it when the arms go into the body or stand out stiffly.":
     "Wie weit die Arme aus der T-Pose herunterkommen. Ändere ihn, wenn die Arme in den Körper ragen oder steif abstehen.",
-  "How much it moves its hands and head on the words it stresses, nods while you talk, waves as voice mode starts, puts a hand to its chin on a long think, and shifts its weight and stretches while it waits.":
-    "Wie stark es Hände und Kopf bei betonten Wörtern bewegt, nickt, während du sprichst, winkt, wenn der Sprachmodus beginnt, bei längerem Nachdenken die Hand ans Kinn legt und beim Warten das Gewicht verlagert und sich streckt.",
   "How much its chest rises and its head sways while it waits.":
     "Wie stark sich die Brust hebt und der Kopf sich wiegt, während es wartet.",
   "How often it blinks.": "Wie oft es blinzelt.",
@@ -118,7 +119,7 @@ export const de: Record<string, string> = {
   "Rename": "Umbenennen",
   "Replace": "Ersetzen",
   "Required": "Erforderlich",
-  "Reset to defaults": "Auf Standard zurücksetzen",
+  "Reset {group}": "{group} zurücksetzen",
   "Shapes its mouth for a vowel on each syllable, guessed from how loud the voice is. Off, it only opens and shuts.":
     "Formt den Mund bei jeder Silbe zu einem Vokal, geschätzt aus der Lautstärke der Stimme. Aus, öffnet und schließt er sich nur.",
   "Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.":

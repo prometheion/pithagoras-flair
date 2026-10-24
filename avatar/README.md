@@ -28,9 +28,9 @@ Each model you add is a choice of its own in every agent's Avatar dialog, so two
 
 ## Changing how a model looks and moves
 
-Beside the preview (under it on a phone, where the preview stays at the top as you scroll) is what can be set on the model, all of it at once, in groups. It is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. A value set apart from its default is shown in colour. **Reset to defaults** puts all of it back, and turns into **Undo** until something else is changed.
+Beside the preview (under it on a phone) is what can be set on the model, in six tabs: Camera, Light, Motion, Eyes, Voice and Arms. The tabs' panel is as tall as the preview whichever tab is shown, and scrolls inside when a tab has more than fits (faded at its foot then, so the rest is seen to be there), so the preview and its settings are seen together, in the Settings dialog of a 1280 by 800 screen too, and choosing a tab does not move the page. What is set is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. A value set apart from its default is shown in colour, and its tab has a dot. Each tab has its own reset (**Reset Camera**, **Reset Light** and so on), which puts back that tab's settings alone and turns into **Undo** until something else is changed.
 
-| Group | Setting | What it does | Range |
+| Tab | Setting | What it does | Range |
 | --- | --- | --- | --- |
 | Camera | Zoom | how close the camera is, in the bust and the face alike | 0.6× to 1.6× |
 | | Height | moves the model up or down in its box: for a model whose head is cut off or sits low | −10 to +10 cm |
@@ -39,16 +39,16 @@ Beside the preview (under it on a phone, where the preview stays at the top as y
 | Motion | Overall motion | all of its own movement at once: breathing, sway, eye movement, nodding, leaning in, the thinking pose and its gestures; it blinks and speaks either way | 0% to 150% |
 | | Breathing and sway | how much its chest rises and its head sways | 0% to 200% |
 | | Leaning in | how far it leans towards you while you talk | 0% to 200% |
-| | Gestures | how much it moves its hands and head on the words it stresses, nods while you talk, waves as voice mode starts, puts a hand to its chin on a long think, and shifts its weight and stretches while it waits; 0% is none of them | 0% to 200% |
 | | Thinking pose | whether it tilts its head and looks away while the agent works on its answer | on or off |
-| | Gesture clips | a VRM Animation file for the wave and one for the hand to the chin, played in place of the built-in gesture; **Try** shows either in the preview (see [Gesture clips](#gesture-clips)) | a `.vrma` file, or built in |
 | Eyes | Gaze | at you, its eyes moving a little now and then; or around, its eyes wandering while nothing is said and coming back when you talk or it speaks | at you, around |
 | | Blinking | how often it blinks | about 8 to 30 a minute |
 | Voice | Mouth sensitivity | how wide the mouth opens at the same loudness: raise it for a quiet voice | 50% to 200% |
 | | Mouth shapes | whether the mouth takes a vowel's shape on each syllable, or only opens and shuts | on or off |
 | Arms | Arm angle | how far the arms come down from the T-pose a VRM model is made in: change it when they go into the body or stand out stiffly | 46° to 83° |
+| | Gestures | how much it moves its hands and head on the words it stresses, nods while you talk, waves as voice mode starts, puts a hand to its chin on a long think, and shifts its weight and stretches while it waits; 0% is none of them | 0% to 200% |
+| | Gesture clips | a VRM Animation file for the wave and one for the hand to the chin, played in place of the built-in gesture; **Try** shows either in the preview (see [Gesture clips](#gesture-clips)) | a `.vrma` file, or built in |
 
-With **reduce motion** set in the system, breathing, sway, eye movement and every gesture stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion group says so. The mouth's shapes stay: they do not move the body.
+With **reduce motion** set in the system, breathing, sway, eye movement and every gesture stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion tab says so. The mouth's shapes stay: they do not move the body.
 
 The picture on the agent's card is made again on this page whenever what shows in it (zoom, height, the lights, the arm angle) changes, and once for every model after an update changes how models are drawn. The Agents page shows the last picture made until the 3D Avatar page in Settings is opened.
 
@@ -72,7 +72,7 @@ What reaches the avatar of the agent's voice is one number, how loud it is now: 
 
 ## Gesture clips
 
-The wave and the hand to the chin are built in, and work with any VRM model. In their place a model can be given a [VRM Animation](https://vrm.dev/en/vrma/) clip (`.vrma`) of each, uploaded under **Gesture clips** in its Motion group: the wave's clip plays once as voice mode starts, and the thinking clip plays from its start once the agent has thought for 2.5 seconds, holding its last frame until the answer comes. A clip is played over the rest of the motion, fading in and out, and only its turns of the body's bones are played: it does not move the model across the frame, and what it does to the face and the eyes is left to the avatar. Up to 4 MB, checked as it is uploaded. Clips are kept with the model, so every agent with the model has them; **Reset to defaults** leaves them.
+The wave and the hand to the chin are built in, and work with any VRM model. In their place a model can be given a [VRM Animation](https://vrm.dev/en/vrma/) clip (`.vrma`) of each, uploaded under **Gesture clips** in its Arms tab: the wave's clip plays once as voice mode starts, and the thinking clip plays from its start once the agent has thought for 2.5 seconds, holding its last frame until the answer comes. A clip is played over the rest of the motion, fading in and out, and only its turns of the body's bones are played: it does not move the model across the frame, and what it does to the face and the eyes is left to the avatar. Up to 4 MB, checked as it is uploaded. Clips are kept with the model, so every agent with the model has them; **Reset Arms** leaves them.
 
 None comes with the extension. VRoid's free [VRM animation set](https://booth.pm/en/items/5512385) has a greeting among its seven: its terms let you use and change the motions, for profit too with a credit to pixiv's VRoid Project, but not pass them on, which is why this extension cannot ship it. Download it yourself and upload `VRMA_02` as the wave. Other clips are made with tools such as [bvh2vrma](https://vrm-c.github.io/bvh2vrma/) from BVH motion capture.
 
