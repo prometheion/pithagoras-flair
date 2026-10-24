@@ -21,7 +21,7 @@ Then install the `avatar` folder's path (for example `/opt/pithagoras-flair/avat
 
 ## Using it
 
-1. **Settings → 3D Avatar → Add a model**, and pick one or more `.vrm` files, or drop them on the page. Each model is a card in the page's gallery; choose one to see it under the gallery: what its file says of its own licence, a live preview as voice mode draws it, with the five states voice mode has and **Talk** to play a made-up turn, and what can be set on it (below). There it can be renamed, downloaded and deleted. The page also makes a small picture of each model's face for the agent's card.
+1. **Settings → 3D Avatar → Add a model**, and pick one or more `.vrm` files, or drop them on the page. Each model is a card in the page's gallery, one row that scrolls sideways when there are more than fit; choose one to see it under the gallery, the page scrolled as far as it takes to show its preview: what its file says of its own licence, a live preview as voice mode draws it, with the five states voice mode has and **Talk** to play a made-up turn, and what can be set on it (below). There it can be renamed, downloaded and deleted. The page also makes a small picture of each model's face for the agent's card.
 2. **Agents**, open the agent, and use the palette on its avatar. Under **Shown as**, choose the model, and **Save avatar**.
 
 Each model you add is a choice of its own in every agent's Avatar dialog, so two agents can have two characters. Deleting a model gives the agents that used it the orb again; adding the same file again brings it back for them. Wherever the model cannot be drawn (it is still loading, the browser has no WebGL 2, the file cannot be read, the drawing context was lost), voice mode shows the agent's orb.

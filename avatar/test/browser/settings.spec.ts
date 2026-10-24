@@ -76,9 +76,10 @@ test("a model is added from its file, chosen, said to be added, and given a port
   expect(new URL((await portrait).url()).searchParams.get("stamp")).toBe(portraitStamp(DEFAULT_SETTINGS));
   await expect(card.locator("img")).toBeVisible();
   await expect(studio(page, "Tiny")).toBeVisible();
-  // The empty state's list is gone, and the gallery ends with the card that adds another.
+  // The empty state's list is gone, and the gallery starts with the card that adds another.
   await expect(page.getByText("Free models to start with")).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Add a model/ })).toBeVisible();
+  await expect(page.locator("li").first().getByRole("button", { name: /Add a model/ })).toBeVisible();
 });
 
 test("models dropped on the page are added one after another, and one refused is said by its name while the others are added", async ({ page, request }) => {
@@ -462,22 +463,48 @@ test("the preview is wider than the settings beside it and stays in view as they
   expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
 });
 
-test("on a phone the page is one column: two cards to a row, the preview above the controls, and nothing wider than the screen", async ({ page, request }) => {
+/** Models of their own name each, `Tiny 1` and on: a file differs by its name, and the server keeps one of each file. */
+const named = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `tiny-${i + 1}.vrm`, buffer: Buffer.from(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = `Tiny ${i + 1}`))) }));
+
+test("on a phone the page is one column: the gallery one row that scrolls sideways, the card that adds one first, and nothing wider than the screen", async ({ page, request }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await open(page, request);
-  await add(page, [
-    { name: "one.vrm", buffer: Buffer.from(tinyVrm1()) },
-    { name: "zero.vrm", buffer: Buffer.from(tinyVrm0()) },
-  ]);
-  await expect(cards(page)).toHaveCount(2);
-  const [first, second] = [await cards(page).nth(0).boundingBox(), await cards(page).nth(1).boundingBox()];
-  expect(Math.abs(first!.y - second!.y)).toBeLessThan(1);
-  const added = await page.getByRole("button", { name: /Add a model/ }).boundingBox();
-  expect(added!.y).toBeGreaterThan(first!.y + first!.height);
+  await add(page, named(5));
+  await expect(cards(page)).toHaveCount(5);
+  const added = (await page.getByRole("button", { name: /Add a model/ }).boundingBox())!;
+  const boxes = await cards(page).evaluateAll((all) => all.map((card) => card.getBoundingClientRect().toJSON() as DOMRect));
+  for (const box of boxes) expect(Math.abs(box.top - added.y)).toBeLessThan(1);
+  expect(boxes[0].left).toBeGreaterThan(added.x + added.width);
+  // The last cards are past the screen's edge, in the row, which scrolls; the page does not.
+  expect(boxes.at(-1)!.left).toBeGreaterThan(375);
+  const row = page.locator("ul").filter({ has: cards(page).first() });
+  expect(await row.evaluate((list) => list.scrollWidth > list.clientWidth)).toBe(true);
+  await cards(page).last().scrollIntoViewIfNeeded();
+  await expect(cards(page).last()).toBeInViewport();
   const preview = await page.getByRole("region", { name: "Preview" }).boundingBox();
   const settings = await page.getByRole("group", { name: "Camera", exact: true }).boundingBox();
   expect(preview!.y + preview!.height).toBeLessThan(settings!.y);
   expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
+});
+
+test("choosing a card brings its preview into view, as little as it takes, and not when it is in view already", async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await open(page, request);
+  await add(page, named(3));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const preview = page.getByRole("region", { name: "Preview" });
+  await expect(preview).not.toBeInViewport({ ratio: 1 });
+  await cards(page).nth(1).click();
+  await expect(studio(page, "Tiny 2")).toBeVisible();
+  await expect(preview).toBeInViewport({ ratio: 1 });
+  // Brought up to the screen's bottom edge, not to its top: the gallery is still above it.
+  const bottom = await preview.evaluate((square) => square.closest(".sticky")!.getBoundingClientRect().bottom);
+  expect(Math.abs(bottom - 600)).toBeLessThan(2);
+  const scrolled = await page.evaluate(() => window.scrollY);
+  await cards(page).nth(2).click();
+  await expect(studio(page, "Tiny 3")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
 });
 
 test("in German, all of it", async ({ page, request }) => {

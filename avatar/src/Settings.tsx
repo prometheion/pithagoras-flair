@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
+import { flushSync } from "react-dom";
 import type { ApiError } from "@pithagoras/extension-api";
 import type { Model } from "./model";
 import { withDefaults, type ModelSettings } from "./model-settings";
@@ -60,6 +61,12 @@ const PLUS = (
  * states voice mode shows, and what can be set on it. An agent is given a model in its own Avatar dialog, which lists
  * them beside the orb. With no models yet, the page says where free ones are.
  *
+ * The gallery is one row, which scrolls sideways when there are more cards than it shows, so however many models
+ * there are the chosen one's preview starts just under it. The card that adds a model comes first, where it is seen
+ * whatever the row is scrolled to; files are dropped anywhere on the row. Choosing a card brings the preview into view
+ * as far as it is not, as little as it takes: on a short screen it is under the fold, and the card's highlight would
+ * be all that changed.
+ *
  * The picture of a model that an agent's card shows is made here, in this browser, for each model whose picture is not
  * what it would draw now (`portraitStamp`: one made before its settings changed, or before a change to how models are
  * drawn, or none yet): when the page is opened, after a model is added and after its settings are saved. One at a
@@ -84,6 +91,7 @@ export function Settings() {
   const file = useRef<HTMLInputElement>(null);
   const add = useRef<HTMLButtonElement>(null);
   const gallery = useRef<HTMLDivElement>(null);
+  const preview = useRef<HTMLDivElement>(null);
   // Drags over the gallery's children each enter and leave it: it is left when as many have left as entered.
   const depth = useRef(0);
   // Where the focus goes once the list is drawn again: a model's card, or the Add button.
@@ -204,6 +212,11 @@ export function Settings() {
     // Kept focused while it uploads: a button that is disabled loses the focus.
     if (!uploading) file.current?.click();
   };
+  // The chosen model's studio drawn first, so its preview is where it now is.
+  const show = (model: Model) => {
+    flushSync(() => setChosen(model.id));
+    preview.current?.scrollIntoView({ block: "nearest", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  };
 
   const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes("Files");
   const drops = {
@@ -272,25 +285,15 @@ export function Settings() {
               </div>
             </>
           ) : (
-            <ul className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-3">
-              {models.map((model) => (
-                <li key={model.id}>
-                  <Card
-                    model={model}
-                    chosen={model.id === previewed?.id}
-                    making={making === model.id}
-                    undrawable={undrawable.has(`${model.id}|${portraitStamp(withDefaults(model.settings))}`)}
-                    onChoose={() => setChosen(model.id)}
-                  />
-                </li>
-              ))}
-              <li>
+            // Room around the cards for the focus ring, which the row would cut, and under them for its scrollbar.
+            <ul className="-mt-1 flex snap-x snap-mandatory scroll-px-1 gap-3 overflow-x-auto px-1 pb-3 pt-1">
+              <li className="w-28 shrink-0 snap-start">
                 <button
                   ref={add}
                   type="button"
                   aria-disabled={uploading ? true : undefined}
                   onClick={choose}
-                  className={`flex h-full min-h-[10rem] w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-2 text-center transition motion-reduce:transition-none ${
+                  className={`flex h-full w-full flex-col items-center justify-center gap-1 rounded-xl border border-dashed p-2 text-center transition motion-reduce:transition-none ${
                     dragging ? "border-accent/60 bg-accent/5 text-accent" : "border-line text-fg-subtle hover:bg-fg/5 hover:text-fg"
                   } ${uploading ? "cursor-progress" : ""}`}
                 >
@@ -299,6 +302,17 @@ export function Settings() {
                   <span className="text-[11px] text-fg-faint">{t("Choose a .vrm file, or drop one here")}</span>
                 </button>
               </li>
+              {models.map((model) => (
+                <li key={model.id} className="w-32 shrink-0 snap-start">
+                  <Card
+                    model={model}
+                    chosen={model.id === previewed?.id}
+                    making={making === model.id}
+                    undrawable={undrawable.has(`${model.id}|${portraitStamp(withDefaults(model.settings))}`)}
+                    onChoose={() => show(model)}
+                  />
+                </li>
+              ))}
             </ul>
           )}
         </div>
@@ -320,6 +334,7 @@ export function Settings() {
         <Studio
           key={previewed.id}
           model={previewed}
+          previewRef={preview}
           onRename={(name) =>
             run(async () => {
               await api.rename(previewed.id, name);
