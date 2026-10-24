@@ -28,24 +28,24 @@ Each model you add is a choice of its own in every agent's Avatar dialog, so two
 
 ## Changing how a model looks and moves
 
-Beside the preview, in three tabs, is what can be set on the model. It is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. **Reset to defaults** puts all of it back.
+Beside the preview (under it on a phone, where the preview stays at the top as you scroll) is what can be set on the model, all of it at once, in groups. It is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. A value set apart from its default is shown in colour. **Reset to defaults** puts all of it back, and turns into **Undo** until something else is changed.
 
-| Tab | Setting | What it does | Range |
+| Group | Setting | What it does | Range |
 | --- | --- | --- | --- |
-| Camera and light | Zoom | how close the camera is, in the bust and the face alike | 0.6× to 1.6× |
+| Camera | Zoom | how close the camera is, in the bust and the face alike | 0.6× to 1.6× |
 | | Height | moves the model up or down in its box: for a model whose head is cut off or sits low | −10 to +10 cm |
-| | Brightness | how strongly the lights fall on it | 50% to 150% |
+| Light | Brightness | how strongly the lights fall on it | 50% to 150% |
 | | Warmth | the lights' colour, from cool blue to warm orange | cooler 100% to warmer 100% |
 | Motion | Overall motion | all of its own movement at once: breathing, sway, eye movement, nodding, leaning in and the thinking pose; it blinks and speaks either way | 0% to 150% |
 | | Breathing and sway | how much its chest rises and its head sways | 0% to 200% |
-| | Blinking | how often it blinks | about 8 to 30 a minute |
 | | Leaning in | how far it leans towards you while you talk | 0% to 200% |
 | | Thinking pose | whether it tilts its head and looks away while the agent works on its answer | on or off |
-| | Gaze | at you, its eyes moving a little now and then; or around, its eyes wandering while nothing is said and coming back when you talk or it speaks | at you, around |
-| Voice and pose | Mouth sensitivity | how wide the mouth opens at the same loudness: raise it for a quiet voice | 50% to 200% |
-| | Arm angle | how far the arms come down from the T-pose a VRM model is made in: change it when they go into the body or stand out stiffly | 46° to 83° |
+| Eyes | Gaze | at you, its eyes moving a little now and then; or around, its eyes wandering while nothing is said and coming back when you talk or it speaks | at you, around |
+| | Blinking | how often it blinks | about 8 to 30 a minute |
+| Voice | Mouth sensitivity | how wide the mouth opens at the same loudness: raise it for a quiet voice | 50% to 200% |
+| Arms | Arm angle | how far the arms come down from the T-pose a VRM model is made in: change it when they go into the body or stand out stiffly | 46° to 83° |
 
-With **reduce motion** set in the system, breathing, sway and eye movement stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion tab says so.
+With **reduce motion** set in the system, breathing, sway and eye movement stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion group says so.
 
 The picture on the agent's card is made again on this page whenever what shows in it (zoom, height, the lights, the arm angle) changes, and once for every model after an update changes how models are drawn. The Agents page shows the last picture made until the 3D Avatar page in Settings is opened.
 

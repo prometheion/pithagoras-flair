@@ -21,7 +21,9 @@ import { NAME_MAX } from "./vrm-file";
  * What is set is saved as it is changed: a slider when it is let go, a switch or a choice at once. The preview draws
  * a slider's value while it is still held, and the saved settings reach every avatar of the model wherever it is drawn
  * (models.ts). Saves go one at a time, the newest last, so the server keeps the last change whatever order two
- * answers would come in; a refused one is said over the page, and what is shown goes back to what is saved.
+ * answers would come in; a refused one is said over the page, and what is shown goes back to what is saved. Reset to
+ * defaults is saved at once too, and can be undone until something else is changed: what was set before it is kept
+ * for that, here, while the model is the one chosen.
  */
 
 /** The preview's states, in the words of the portal's own Avatar dialog. */
@@ -38,21 +40,24 @@ const FRAMINGS: [FramingKind, string][] = [["bust", msg("Bust")], ["face", msg("
  */
 const TURN: [AvatarMode, number][] = [["input", 2.5], ["thinking", 2], ["output", 4]];
 
-type Tab = "look" | "motion" | "voice";
-const TABS: [Tab, string][] = [["look", msg("Camera and light")], ["motion", msg("Motion")], ["voice", msg("Voice and pose")]];
+/** The groups the settings are shown in, one under the other, each under a heading of its own. */
+type Group = "camera" | "light" | "motion" | "eyes" | "voice" | "arms";
+const GROUPS: [Group, string][] = [
+  ["camera", msg("Camera")], ["light", msg("Light")], ["motion", msg("Motion")], ["eyes", msg("Eyes")], ["voice", msg("Voice")], ["arms", msg("Arms")],
+];
 
-/** Each slider: its setting, its name and what it does, in the tab it is in. */
-const SLIDERS: [Tab, NumberKey, string, string][] = [
-  ["look", "zoom", msg("Zoom"), msg("How close the camera is.")],
-  ["look", "height", msg("Height"), msg("Moves the model up or down in its box.")],
-  ["look", "brightness", msg("Brightness"), msg("How strongly the light falls on it.")],
-  ["look", "warmth", msg("Warmth"), msg("The colour of the light, from cool to warm.")],
+/** Each slider: the group it is in, its setting, its name and what it does. */
+const SLIDERS: [Group, NumberKey, string, string][] = [
+  ["camera", "zoom", msg("Zoom"), msg("How close the camera is.")],
+  ["camera", "height", msg("Height"), msg("Moves the model up or down in its box.")],
+  ["light", "brightness", msg("Brightness"), msg("How strongly the light falls on it.")],
+  ["light", "warmth", msg("Warmth"), msg("The colour of the light, from cool to warm.")],
   ["motion", "motion", msg("Overall motion"), msg("All of its own movement: breathing, sway, eye movement, nodding, leaning in and the thinking pose. It blinks and speaks either way.")],
   ["motion", "breathing", msg("Breathing and sway"), msg("How much its chest rises and its head sways while it waits.")],
-  ["motion", "blinkRate", msg("Blinking"), msg("How often it blinks.")],
   ["motion", "lean", msg("Leaning in"), msg("How far it leans towards you while you talk.")],
+  ["eyes", "blinkRate", msg("Blinking"), msg("How often it blinks.")],
   ["voice", "mouth", msg("Mouth sensitivity"), msg("How wide the mouth opens at the same loudness. Raise it for a quiet voice.")],
-  ["voice", "armDown", msg("Arm angle"), msg("How far the arms come down from the T-pose. Change it when the arms go into the body or stand out stiffly.")],
+  ["arms", "armDown", msg("Arm angle"), msg("How far the arms come down from the T-pose. Change it when the arms go into the body or stand out stiffly.")],
 ];
 
 const GAZE: [Gaze, string, string][] = [
@@ -90,6 +95,7 @@ const PENCIL = icon(<path d="M4 20h4L19 9l-4-4L4 16v4zM13 7l4 4" />);
 const DOWNLOAD = icon(<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />);
 const TRASH = icon(<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />);
 const RESET = icon(<path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" />);
+const UNDO = icon(<path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3" />);
 const PLAY = icon(<path d="M8 5v14l11-7z" />);
 const STOP = icon(<path d="M7 7h10v10H7z" />);
 
@@ -110,9 +116,12 @@ export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
   const drawn = held ?? pending ?? saved;
   const queued = useRef<ModelSettings>();
   const sending = useRef(false);
+  // What was set before Reset to defaults, for Undo, until any other change.
+  const [undo, setUndo] = useState<ModelSettings>();
 
   const save = async (next: ModelSettings) => {
     setPending(next);
+    setUndo(undefined);
     queued.current = next;
     if (sending.current) return;
     sending.current = true;
@@ -153,9 +162,11 @@ export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
       </div>
       <div className="mt-5 grid gap-4 [@container(min-width:36rem)]:grid-cols-[minmax(0,3fr)_minmax(14rem,2fr)] [@container(min-width:36rem)]:gap-6">
         {/* Held at the top of the page. Over the settings, it hides them as they scroll under it: the card's own colour,
-            as the card's is the page's under its own. */}
-        <div ref={previewRef} className="sticky top-0 z-10 bg-surface [@container(min-width:36rem)]:self-start">
-          <div className="bg-raised/40 pb-3">
+            as the card's is the page's under its own. The Settings pane's padding (1rem) would leave a strip above it
+            that they show in: it is held that much higher, over a band of its colour, and is that much higher in the
+            card as well, so it is where it was until it is held. */}
+        <div ref={previewRef} className="sticky -top-4 z-10 -mt-4 bg-surface [@container(min-width:36rem)]:self-start">
+          <div className="bg-raised/40 pb-3 pt-4">
             <Preview model={model} settings={drawn} />
           </div>
         </div>
@@ -169,7 +180,9 @@ export function Studio({ model, onRename, onDelete, onSave, previewRef }: {
               holding.current = undefined;
               setHeld(undefined);
               void save({ ...DEFAULT_SETTINGS });
+              setUndo(drawn);
             }}
+            onUndo={undo && (() => void save(undo))}
           />
         </div>
       </div>
@@ -375,64 +388,69 @@ function Preview({ model, settings }: { model: Model; settings: ModelSettings })
 }
 
 /**
- * What can be set on the model, in three tabs as the Avatar dialog groups its own: the camera and the light, how it
- * moves, and its mouth and arms. The labels of `ui.Segments` are passed translated: it says them through the portal's
- * own texts, which do not have the extension's.
+ * What can be set on the model, all of it at once in one column, in groups under headings of their own: the camera,
+ * the light, how it moves, its eyes, its voice and its arms. A value that differs from the default is shown in the
+ * accent colour. Reset to defaults is on the column's heading, as it puts back all of it, and turns into Undo once
+ * pressed, until something else is changed. The labels of `ui.Segments` are passed translated: it says them through
+ * the portal's own texts, which do not have the extension's.
  */
-function Controls({ settings, onMove, onLetGo, onSet, onReset }: {
+function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
   settings: ModelSettings;
   onMove: (patch: Partial<ModelSettings>) => void;
   onLetGo: () => void;
   onSet: (patch: Partial<ModelSettings>) => void;
   onReset: () => void;
+  /** Puts back what was set before Reset to defaults, while that can be done. */
+  onUndo?: () => void;
 }) {
   const { ui } = portal;
-  const [tab, setTab] = useState<Tab>("look");
   const ids = useId();
   // Read as the page is drawn: the stage reads it once, as it is made.
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const sliders = (of: Tab) =>
-    SLIDERS.filter(([inTab]) => inTab === of).map(([, key, label, hint]) => (
-      <Slider key={key} setting={key} label={label} hint={hint} value={settings[key]} onMove={(value) => onMove({ [key]: value })} onLetGo={onLetGo} />
+  const sliders = (of: Group) =>
+    SLIDERS.filter(([group]) => group === of).map(([, key, label, hint]) => (
+      <Slider
+        key={key}
+        setting={key}
+        label={label}
+        hint={hint}
+        value={settings[key]}
+        differs={settings[key] !== DEFAULT_SETTINGS[key]}
+        onMove={(value) => onMove({ [key]: value })}
+        onLetGo={onLetGo}
+      />
     ));
   const gazeHint = GAZE.find(([id]) => id === settings.gaze)![2];
   return (
     <div data-setting={t("Look and motion")}>
-      <h4 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{t("Look and motion")}</h4>
-      <p className="mt-0.5 text-xs text-fg-subtle">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
-      <div role="tablist" aria-label={t("Settings of this model")} className="mt-3 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-line" onKeyDown={ui.tabKeys}>
-        {TABS.map(([id, label]) => (
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0 flex-1 basis-48">
+          <h4 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{t("Look and motion")}</h4>
+          <p className="mt-0.5 text-xs text-fg-subtle">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <p role="status" className="text-[11px] text-fg-faint">{onUndo ? t("Back to the defaults.") : ""}</p>
+          {/* One button for both, so it keeps the focus as it turns from one into the other. */}
           <button
-            key={id}
-            id={`${ids}-tab-${id}`}
             type="button"
-            role="tab"
-            aria-selected={tab === id}
-            aria-controls={`${ids}-panel`}
-            tabIndex={tab === id ? 0 : -1}
-            onClick={() => setTab(id)}
-            className={`-mb-px shrink-0 border-b-2 px-3 py-1.5 text-xs transition ${tab === id ? "border-accent text-fg" : "border-transparent text-fg-muted hover:text-fg"}`}
+            className={ui.classes.ghost}
+            disabled={!onUndo && Object.keys(changed(settings)).length === 0}
+            onClick={onUndo ?? onReset}
           >
-            {t(label)}
+            {onUndo ? UNDO : RESET}
+            {onUndo ? t("Undo") : t("Reset to defaults")}
           </button>
-        ))}
+        </div>
       </div>
-      <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-tab-${tab}`} className="space-y-4 pt-4">
-        {tab === "motion" && reduced && (
-          <p className="text-[11px] text-fg-faint">
-            {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
-          </p>
-        )}
-        {sliders(tab)}
-        {tab === "motion" && (
-          <>
-            <div className="flex items-start gap-3">
-              <div className="min-w-0 flex-1 text-xs text-fg-muted">
-                {t("Thinking pose")}
-                <span className="mt-0.5 block text-[11px] text-fg-faint">{t("Tilts its head and looks away while the agent works on its answer.")}</span>
-              </div>
-              <ui.Switch on={settings.thinkingPose} label={t("Thinking pose")} onChange={(on) => onSet({ thinkingPose: on })} />
-            </div>
+      {GROUPS.map(([group, title]) => (
+        <div key={group} role="group" aria-labelledby={`${ids}-${group}`} className="mt-4 space-y-4 border-t border-line pt-4">
+          <h5 id={`${ids}-${group}`} className="text-xs font-medium text-fg">{t(title)}</h5>
+          {group === "motion" && reduced && (
+            <p className="text-[11px] text-fg-faint">
+              {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
+            </p>
+          )}
+          {group === "eyes" && (
             <div>
               <p className="text-xs text-fg-muted">{t("Gaze")}</p>
               <div className="mt-1.5">
@@ -440,31 +458,37 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset }: {
               </div>
               <p className="mt-1 text-[11px] text-fg-faint">{t(gazeHint)}</p>
             </div>
-          </>
-        )}
-      </div>
-      <div className="mt-5 flex justify-end">
-        <button type="button" className={ui.classes.ghost} disabled={Object.keys(changed(settings)).length === 0} onClick={onReset}>
-          {RESET}
-          {t("Reset to defaults")}
-        </button>
-      </div>
+          )}
+          {sliders(group)}
+          {group === "motion" && (
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1 text-xs text-fg-muted">
+                {t("Thinking pose")}
+                <span className="mt-0.5 block text-[11px] text-fg-faint">{t("Tilts its head and looks away while the agent works on its answer.")}</span>
+              </div>
+              <ui.Switch on={settings.thinkingPose} label={t("Thinking pose")} onChange={(on) => onSet({ thinkingPose: on })} />
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
 
 /**
- * A setting on a slider, its value shown beside its name and said as it is shown. The value is drawn while the slider
+ * A setting on a slider, its value shown beside its name (in the accent colour when it `differs` from the default)
+ * and said as it is shown. The value is drawn while the slider
  * is held (`onMove`, React's onChange, which is the input event) and saved when it is let go (`onLetGo`): on the
  * input's own change event, which the browser fires once a value is set, whether by a pointer let go, a key, or a
  * screen reader's gesture to raise or lower it, which moves neither a pointer nor a key nor the focus. React has no
  * handler for that event of its own.
  */
-function Slider({ setting, label, hint, value, onMove, onLetGo }: {
+function Slider({ setting, label, hint, value, differs, onMove, onLetGo }: {
   setting: NumberKey;
   label: string;
   hint: string;
   value: number;
+  differs: boolean;
   onMove: (value: number) => void;
   onLetGo: () => void;
 }) {
@@ -484,7 +508,7 @@ function Slider({ setting, label, hint, value, onMove, onLetGo }: {
     <label className="block text-xs text-fg-muted">
       <span className="flex justify-between gap-3">
         <span id={`${ids}-name`}>{t(label)}</span>
-        <span className="tabular-nums text-accent">{said}</span>
+        <span className={`tabular-nums ${differs ? "text-accent" : "text-fg-subtle"}`}>{said}</span>
       </span>
       <input
         ref={input}

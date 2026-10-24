@@ -259,7 +259,7 @@ test("the preview draws the bust voice mode draws, or the face, in the state cho
   await expect(talk).toBeVisible();
 });
 
-test("a slider is saved as it is let go, drawn before, and its portrait made again; Reset to defaults saves them all", async ({ page, request }) => {
+test("a slider is saved as it is let go, drawn before, and its portrait made again; Reset to defaults saves them all, and Undo puts them back", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
   await drawn(page);
@@ -285,8 +285,23 @@ test("a slider is saved as it is let go, drawn before, and its portrait made aga
   await reset.click();
   await expect.poll(() => sent.at(-1)!.postDataJSON()).toEqual({ settings: {} });
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.00×");
-  await expect(reset).toBeDisabled();
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({});
+  // The same button, Undo now, with the focus still on it, until something else is changed.
+  const undo = page.getByRole("button", { name: "Undo" });
+  await expect(undo).toBeFocused();
+  await expect(page.getByRole("status").filter({ hasText: "Back to the defaults." })).toHaveCount(1);
+  await undo.click();
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.2 });
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.20×");
+  await expect(reset).toBeFocused();
+  await expect(page.getByText("Back to the defaults.")).toHaveCount(0);
+  await reset.click();
+  await zoom.focus();
+  await zoom.press("ArrowLeft");
+  await expect(undo).toHaveCount(0);
+  await zoom.press("ArrowRight");
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({});
+  await expect(reset).toBeDisabled();
 });
 
 test("a slider set as a screen reader sets it, with no key, pointer or focus, is saved; and dragged with the mouse, once as it is let go", async ({ page, request }) => {
@@ -307,6 +322,7 @@ test("a slider set as a screen reader sets it, with no key, pointer or focus, is
   expect(await zoom.evaluate((slider) => slider === document.activeElement)).toBe(false);
 
   // Held and moved, then let go: drawn as it moves, saved once.
+  await page.getByRole("slider", { name: "Height" }).scrollIntoViewIfNeeded();
   const box = (await page.getByRole("slider", { name: "Height" }).boundingBox())!;
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
@@ -332,12 +348,24 @@ test("each slider says its value as it is shown, and the switch and the choices 
   await expect(slider("Warmth")).toHaveAttribute("aria-valuetext", "Cooler 5%");
   await expect(slider("Zoom")).toHaveAccessibleDescription("How close the camera is.");
 
-  const tabs = page.getByRole("tablist", { name: "Settings of this model" });
-  await expect(tabs.getByRole("tab")).toHaveText(["Camera and light", "Motion", "Voice and pose"]);
-  // Arrow keys move along the tabs, as the portal's do.
-  await tabs.getByRole("tab", { name: "Camera and light" }).focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(tabs.getByRole("tab", { name: "Motion" })).toHaveAttribute("aria-selected", "true");
+  // All of them at once, each in its group, a value set apart from the default in the accent colour.
+  const group = (name: string) => page.getByRole("group", { name, exact: true });
+  for (const [name, sliders] of [
+    ["Camera", ["Zoom", "Height"]],
+    ["Light", ["Brightness", "Warmth"]],
+    ["Motion", ["Overall motion", "Breathing and sway", "Leaning in"]],
+    ["Eyes", ["Blinking"]],
+    ["Voice", ["Mouth sensitivity"]],
+    ["Arms", ["Arm angle"]],
+  ] as const) {
+    await expect(group(name).getByRole("slider")).toHaveCount(sliders.length);
+    for (const one of sliders) await expect(group(name).getByRole("slider", { name: one, exact: true })).toBeVisible();
+  }
+  await expect(group("Motion").getByRole("switch", { name: "Thinking pose" })).toBeVisible();
+  await expect(group("Eyes").getByRole("radiogroup", { name: "Gaze" })).toBeVisible();
+  const value = (name: string) => page.getByRole("slider", { name, exact: true }).locator("xpath=preceding-sibling::span/span[2]");
+  await expect(value("Height")).toHaveClass(/text-accent/);
+  await expect(value("Zoom")).not.toHaveClass(/text-accent/);
   for (const [name, said] of [["Overall motion", "100%"], ["Breathing and sway", "100%"], ["Blinking", "About 15 a minute"], ["Leaning in", "100%"]]) await expect(slider(name)).toHaveAttribute("aria-valuetext", said);
 
   const sent: Request[] = [];
@@ -352,8 +380,6 @@ test("each slider says its value as it is shown, and the switch and the choices 
   await expect(page.getByText("Its eyes wander while nothing is said, and come back to you when you talk or it speaks.")).toBeVisible();
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({ height: 0.01, warmth: -0.05, thinkingPose: false, gaze: "around" });
   expect(sent.length).toBe(2);
-
-  await tabs.getByRole("tab", { name: "Voice and pose" }).click();
   await expect(slider("Mouth sensitivity")).toHaveAttribute("aria-valuetext", "100%");
   await expect(slider("Arm angle")).toHaveAttribute("aria-valuetext", "69°");
 });
@@ -369,14 +395,14 @@ test("a refused save is said over the page, and the controls show what is saved 
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.00×");
 });
 
-test("with less motion asked for by the system, the Motion tab says what that leaves", async ({ page, request }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" });
+test("with less motion asked for by the system, the Motion group says what that leaves", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
   const note = "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.";
   await expect(page.getByText(note)).toHaveCount(0);
-  await page.getByRole("tab", { name: "Motion" }).click();
-  await expect(page.getByText(note)).toBeVisible();
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await open(page, request, "en", false);
+  await expect(page.getByRole("group", { name: "Motion", exact: true }).getByText(note)).toBeVisible();
 });
 
 test("a portrait made before the drawing changed is made again when the page is opened, and a current one is not", async ({ page, request }) => {
@@ -400,7 +426,7 @@ test("a portrait made before the drawing changed is made again when the page is 
   expect(sent).toBe(0);
 });
 
-test("the preview is wider than the settings beside it; on a phone it is over them, held at the top as they scroll, its states one row", async ({ page, request }) => {
+test("the preview is wider than the settings beside it and stays in view as they scroll; on a phone it is over them, held at the top, its states one row", async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 860 });
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
@@ -413,7 +439,7 @@ test("the preview is wider than the settings beside it; on a phone it is over th
   expect(slider.x).toBeGreaterThan(square.x + square.width);
   expect(slider.y).toBeLessThan(square.y + square.height);
   const held = async () => {
-    await page.getByRole("button", { name: "Reset to defaults" }).scrollIntoViewIfNeeded();
+    await page.getByRole("slider", { name: "Arm angle" }).scrollIntoViewIfNeeded();
     await page.evaluate(() => window.scrollBy(0, 200));
     const box = (await preview.boundingBox())!;
     expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
@@ -421,6 +447,7 @@ test("the preview is wider than the settings beside it; on a phone it is over th
     expect(box.y).toBeLessThan(40);
     return box;
   };
+  await held();
 
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.setViewportSize({ width: 375, height: 812 });
@@ -448,8 +475,8 @@ test("on a phone the page is one column: two cards to a row, the preview above t
   const added = await page.getByRole("button", { name: /Add a model/ }).boundingBox();
   expect(added!.y).toBeGreaterThan(first!.y + first!.height);
   const preview = await page.getByRole("region", { name: "Preview" }).boundingBox();
-  const tabs = await page.getByRole("tablist").boundingBox();
-  expect(preview!.y + preview!.height).toBeLessThan(tabs!.y);
+  const settings = await page.getByRole("group", { name: "Camera", exact: true }).boundingBox();
+  expect(preview!.y + preview!.height).toBeLessThan(settings!.y);
   expect(await page.evaluate(() => document.scrollingElement!.scrollWidth <= document.scrollingElement!.clientWidth)).toBe(true);
 });
 
@@ -480,23 +507,27 @@ test("in German, all of it", async ({ page, request }) => {
   ]) {
     await expect(one.locator("dt", { hasText: label }).first().locator("xpath=following-sibling::dd[1]")).toHaveText(value);
   }
-  for (const name of ["Umbenennen", "Löschen", "Probegespräch", "Auf Standard zurücksetzen"]) await expect(one.getByRole("button", { name, exact: true })).toBeVisible();
+  for (const name of ["Umbenennen", "Löschen", "Probegespräch"]) await expect(one.getByRole("button", { name, exact: true })).toBeVisible();
   await expect(one.getByRole("link", { name: "Herunterladen" })).toBeVisible();
   await expect(page.getByRole("radiogroup", { name: "Ausschnitt" }).getByRole("radio")).toHaveText(["Brustbild", "Gesicht"]);
   await expect(page.getByRole("radiogroup", { name: "Vorschauzustand" }).getByRole("radio")).toHaveText(["Ruhend", "Hört zu", "Spricht", "Denkt nach", "Stumm"]);
   await expect(one).toContainText("Spielt eine erfundene Runde ab: Du sprichst, es denkt nach, dann antwortet es.");
   await expect(one).toContainText("Aussehen und Bewegung");
-  await expect(page.getByRole("tablist", { name: "Einstellungen dieses Modells" }).getByRole("tab")).toHaveText(["Kamera und Licht", "Bewegung", "Stimme und Haltung"]);
+  for (const name of ["Kamera", "Licht", "Bewegung", "Augen", "Stimme", "Arme"]) await expect(one.getByRole("group", { name, exact: true })).toBeVisible();
   for (const [name, said] of [["Zoom", "1,00×"], ["Höhe", "0 cm"], ["Helligkeit", "100\u00a0%"], ["Wärme", "Neutral"]]) {
     await expect(page.getByRole("slider", { name, exact: true })).toHaveAttribute("aria-valuetext", said);
   }
-  await page.getByRole("tab", { name: "Bewegung" }).click();
   for (const [name, said] of [["Bewegung insgesamt", "100\u00a0%"], ["Atmen und Wiegen", "100\u00a0%"], ["Blinzeln", "Etwa 15 pro Minute"], ["Vorbeugen", "100\u00a0%"]]) {
     await expect(page.getByRole("slider", { name, exact: true })).toHaveAttribute("aria-valuetext", said);
   }
   await expect(page.getByRole("switch", { name: "Denkpose" })).toBeVisible();
   await expect(page.getByRole("radiogroup", { name: "Blick" }).getByRole("radio")).toHaveText(["Auf dich", "Umher"]);
-  await page.getByRole("tab", { name: "Stimme und Haltung" }).click();
   await expect(page.getByRole("slider", { name: "Empfindlichkeit des Munds" })).toHaveAccessibleDescription("Wie weit sich der Mund bei gleicher Lautstärke öffnet. Erhöhe sie für eine leise Stimme.");
   await expect(page.getByRole("slider", { name: "Armwinkel" })).toHaveAttribute("aria-valuetext", "69°");
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  await zoom.focus();
+  await zoom.press("ArrowRight");
+  await one.getByRole("button", { name: "Auf Standard zurücksetzen", exact: true }).click();
+  await expect(one.getByRole("button", { name: "Rückgängig", exact: true })).toBeVisible();
+  await expect(one.getByRole("status").filter({ hasText: "Auf Standard zurückgesetzt." })).toHaveCount(1);
 });
