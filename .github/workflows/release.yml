@@ -1,0 +1,61 @@
+# A release of the 3D Avatar, on its tag: avatar-v<version>, the version in avatar/package.json.
+#
+# 1. Its build and unit tests, as test.yml runs them. The browser tests are not run again: they take minutes (Chromium
+#    with its system packages, and the sample models fetched from elsewhere), and test.yml has run them on every pull
+#    request and on the push to main of the commit a tag is put on.
+# 2. The package, @pithagoras/flair-avatar, goes to npm. npm's trusted publishing signs in with this workflow's identity
+#    (`id-token: write`), with no token, and adds provenance. Only a package that is there can be given a trusted
+#    publisher, so its first version is published by hand (`npm publish -w avatar --auth-type=web`, from a clean
+#    checkout of the tag): where npm has the tag's version already, the step says so and publishes nothing. With the
+#    variable NPM_STAGE "true" (the repository's or the organization's), the version is staged (`npm stage publish`)
+#    and published once a maintainer approves it with 2FA on npmjs.com.
+# 3. The GitHub release for the tag.
+name: Release
+
+on:
+  push:
+    tags: ["avatar-v*"]
+
+permissions:
+  contents: write
+  # npm's trusted publishing.
+  id-token: write
+
+env:
+  # How the package goes to npm: see 2. above.
+  NPM_PUBLISH: ${{ vars.NPM_STAGE == 'true' && 'npm stage publish' || 'npm publish' }} -w avatar --access public
+
+jobs:
+  avatar:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      # Node 22 comes with npm 10: trusted publishing takes 11.5.1 or later, and `npm stage` 11.15. One version.
+      - name: npm 11
+        run: npm install -g npm@11.21.0 && npm --version
+      - name: The tag is the package's version
+        run: |
+          VERSION=$(node -p "require('./avatar/package.json').version")
+          [ "$GITHUB_REF_NAME" = "avatar-v$VERSION" ] || { echo "the tag $GITHUB_REF_NAME is not avatar-v$VERSION"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - name: Publish to npm
+        run: |
+          NAME=$(node -p "require('./avatar/package.json').name")
+          if [ "$(npm view "$NAME@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+            echo "$NAME@$VERSION is on npm already: nothing to publish"
+            exit 0
+          fi
+          $NPM_PUBLISH
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --title "3D Avatar $VERSION" --notes "@pithagoras/flair-avatar $VERSION: the extension (npm:@pithagoras/flair-avatar@$VERSION). See avatar/README.md for what it does and how to install it."
