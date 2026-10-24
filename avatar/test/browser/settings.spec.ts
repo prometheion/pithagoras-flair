@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page, type Request } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type Request } from "@playwright/test";
 import { DEFAULT_SETTINGS } from "../../src/model-settings.ts";
 import { DRAW_VERSION, portraitStamp } from "../../src/stage.ts";
 import { tinyVrm0, tinyVrm1 } from "../tiny-vrm.ts";
@@ -233,19 +233,23 @@ test("the preview draws the bust voice mode draws, or the face, in the state cho
   const talk = page.getByRole("button", { name: "Talk" });
   await expect(talk).not.toHaveAttribute("aria-pressed");
   await expect(talk).toHaveAccessibleDescription("Plays a made-up turn: you talk, it thinks, then it answers.");
-  const started = Date.now();
+  // When each is seen, waited for as the page changes (an assertion's retries come up to a second apart), and how
+  // long each step lasted: from one step to the next, as each is timed from its own start.
+  const seen = async (part: Locator) => {
+    await part.waitFor({ timeout: 6000 });
+    return Date.now() / 1000;
+  };
+  const state = (name: string) => page.getByRole("radiogroup", { name: "Preview state" }).getByRole("radio", { name, exact: true, checked: true });
   await talk.click();
   const stop = page.getByRole("button", { name: "Stop" });
+  const listening = await seen(state("Listening"));
   await expect(stop).toBeVisible();
-  await expect(checked).toHaveText("Listening");
-  const at = async (text: string) => {
-    await expect(checked).toHaveText(text, { timeout: 6000 });
-    return (Date.now() - started) / 1000;
-  };
-  expect(Math.abs((await at("Thinking")) - 2.5)).toBeLessThan(0.5);
-  expect(Math.abs((await at("Speaking")) - 4.5)).toBeLessThan(0.5);
-  await expect(talk).toBeVisible({ timeout: 6000 });
-  expect(Math.abs((Date.now() - started) / 1000 - 8.5)).toBeLessThan(0.5);
+  const thinking = await seen(state("Thinking"));
+  const speaking = await seen(state("Speaking"));
+  const done = await seen(talk);
+  expect(Math.abs(thinking - listening - 2.5)).toBeLessThan(0.4);
+  expect(Math.abs(speaking - thinking - 2)).toBeLessThan(0.4);
+  expect(Math.abs(done - speaking - 4)).toBeLessThan(0.4);
   await expect(checked).toHaveText("Speaking");
 
   // Stopped part way, or by choosing a state.
@@ -494,17 +498,28 @@ test("choosing a card brings its preview into view, as little as it takes, and n
   await page.evaluate(() => window.scrollTo(0, 0));
   const preview = page.getByRole("region", { name: "Preview" });
   await expect(preview).not.toBeInViewport({ ratio: 1 });
+  // Where the page is once it has stopped scrolling: the same twice, a quarter of a second apart.
+  const settled = async () => {
+    let at = -1;
+    await expect.poll(async () => {
+      const was = at;
+      at = await page.evaluate(() => window.scrollY);
+      return at === was;
+    }, { intervals: [250] }).toBe(true);
+    return at;
+  };
   await cards(page).nth(1).click();
   await expect(studio(page, "Tiny 2")).toBeVisible();
+  await settled();
   await expect(preview).toBeInViewport({ ratio: 1 });
   // Brought up to the screen's bottom edge, not to its top: the gallery is still above it.
   const bottom = await preview.evaluate((square) => square.closest(".sticky")!.getBoundingClientRect().bottom);
   expect(Math.abs(bottom - 600)).toBeLessThan(2);
-  const scrolled = await page.evaluate(() => window.scrollY);
+  const scrolled = await settled();
   await cards(page).nth(2).click();
   await expect(studio(page, "Tiny 3")).toBeVisible();
-  await page.waitForTimeout(500);
-  expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
+  // Not scrolled again: at most the pixel the browser rounds a position to.
+  expect(Math.abs((await settled()) - scrolled)).toBeLessThanOrEqual(1);
 });
 
 test("in German, all of it", async ({ page, request }) => {
