@@ -1,0 +1,14 @@
+/* The 3D Avatar in the orb's box (Avatar.tsx, Still.tsx): what it draws, and the portal's orb over it while it has nothing drawn. Holding the box to talk is the box's, so nothing here takes a press. The rules below are for its own canvas: the orb the portal hands it is a canvas too, drawn as the portal draws it. */
+.flair-avatar { position: absolute; inset: 0; pointer-events: none; }
+.flair-avatar-gl { position: absolute; inset: 0; }
+/* Larger than the box by 3/14 of it on each side, as the orb's canvas is: the model is not cut at the box's edge. */
+.flair-avatar-gl canvas,
+.flair-avatar-still { position: absolute; left: -21.428571%; top: -21.428571%; width: 142.857143%; height: 142.857143%; max-width: none; }
+/* Faded in once the model is drawn, at once where the system asks for less motion. */
+.flair-avatar-gl canvas { opacity: 0; transition: opacity .4s; }
+.flair-avatar[data-shown="drawn"] .flair-avatar-gl canvas { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .flair-avatar-gl canvas { transition: none; } }
+/* A bust from 160 pixels up, the cut body faded out by the box's bottom edge, so it ends in no line on the stage and not under its status and buttons; the face below, in a soft circle. */
+.flair-avatar-gl[data-framing="bust"] canvas { -webkit-mask-image: linear-gradient(to bottom, #000 64%, transparent 86%); mask-image: linear-gradient(to bottom, #000 64%, transparent 86%); }
+.flair-avatar-gl[data-framing="face"] canvas,
+.flair-avatar-still { -webkit-mask-image: radial-gradient(circle closest-side, #000 60%, transparent 70%); mask-image: radial-gradient(circle closest-side, #000 60%, transparent 70%); }

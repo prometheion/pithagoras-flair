@@ -2,3 +2,7 @@ node_modules/
 .DS_Store
 *.log
 *.tgz
+# The browser tests' own: the sample models they fetch, and what Playwright leaves.
+**/test/.models/
+playwright-report/
+test-results/
