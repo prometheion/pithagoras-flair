@@ -1,15 +1,16 @@
 import type { ModelSpec, Vrm0Licence, Vrm1Licence } from "./model";
 
 /**
- * Whether an uploaded file is a VRM model this extension can draw, read from its first bytes: the GLB header and the
- * JSON chunk after it. The binary chunk is not parsed: a file that passes can still fail to draw, which the Settings
- * page's preview shows, and voice mode then draws the orb. Pure, for the server half and its tests.
+ * Whether an uploaded file is a VRM model this extension can draw (`checkVrm`), or a VRM Animation it can play
+ * (`checkVrma`), read from its first bytes: the GLB header and the JSON chunk after it. The binary chunk is not
+ * parsed: a file that passes can still fail to draw or play, which the Settings page's preview shows; voice mode then
+ * draws the orb for a model, and the built-in gesture for a clip. Pure, for the server half and its tests.
  */
 
 /** Why a file is refused: `code` is what the page says it in its own words by, `detail` what it names. */
 export class Refused extends Error {
   constructor(
-    readonly code: "not-glb" | "not-vrm" | "missing-bone" | "compressed" | "external",
+    readonly code: "not-glb" | "not-vrm" | "not-vrma" | "missing-bone" | "compressed" | "external",
     message: string,
     readonly detail?: string,
   ) {
@@ -49,21 +50,7 @@ const listed = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
  * would be told who looks at the model and when, and an address of the portal's own would be fetched with its login.
  */
 export function checkVrm(read: (position: number, length: number) => Uint8Array, size: number): ModelSpec & { name?: string } {
-  if (size < 20) throw new Refused("not-glb", "The file is too short to be a GLB");
-  const head = read(0, 20);
-  const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
-  if (view.getUint32(0, true) !== GLB_MAGIC) throw new Refused("not-glb", "The file is not a GLB");
-  if (view.getUint32(4, true) !== 2) throw new Refused("not-glb", "The GLB is not of glTF 2");
-  if (view.getUint32(8, true) !== size) throw new Refused("not-glb", "The GLB's header gives another length than the file has");
-  const length = view.getUint32(12, true);
-  if (view.getUint32(16, true) !== JSON_CHUNK || 20 + length > size) throw new Refused("not-glb", "The GLB has no JSON chunk first");
-  let json: unknown;
-  try {
-    json = JSON.parse(new TextDecoder().decode(read(20, length)));
-  } catch {
-    throw new Refused("not-glb", "The GLB's JSON does not parse");
-  }
-  if (!isObject(json)) throw new Refused("not-glb", "The GLB's JSON is not an object");
+  const json = glbJson(read, size);
 
   const used = listed(json.extensionsUsed);
   const extensions = isObject(json.extensions) ? json.extensions : {};
@@ -81,9 +68,7 @@ export function checkVrm(read: (position: number, length: number) => Uint8Array,
   const required = listed(json.extensionsRequired);
   const compressed = COMPRESSIONS.find((name) => required.includes(name));
   if (compressed) throw new Refused("compressed", `The model is compressed in a way this extension cannot read (${compressed})`, compressed);
-  if ([...listed(json.buffers), ...listed(json.images)].some((part) => isObject(part) && "uri" in part)) {
-    throw new Refused("external", "The model loads parts of itself from outside its file");
-  }
+  if (external(json)) throw new Refused("external", "The model loads parts of itself from outside its file");
 
   if (isObject(bones1)) {
     const meta = isObject(vrm1!.meta) ? vrm1!.meta : {};
@@ -91,6 +76,48 @@ export function checkVrm(read: (position: number, length: number) => Uint8Array,
   }
   const meta = isObject(vrm0!.meta) ? vrm0!.meta : {};
   return { spec: "0.x", name: text(meta.title), licence: licence0(meta) };
+}
+
+/**
+ * The JSON of a GLB of glTF 2, from its first bytes: throws `not-glb` for a file whose header is not one or does not
+ * give its length, and for one without a JSON chunk first that lies inside it and parses to an object.
+ */
+function glbJson(read: (position: number, length: number) => Uint8Array, size: number): Json {
+  if (size < 20) throw new Refused("not-glb", "The file is too short to be a GLB");
+  const head = read(0, 20);
+  const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
+  if (view.getUint32(0, true) !== GLB_MAGIC) throw new Refused("not-glb", "The file is not a GLB");
+  if (view.getUint32(4, true) !== 2) throw new Refused("not-glb", "The GLB is not of glTF 2");
+  if (view.getUint32(8, true) !== size) throw new Refused("not-glb", "The GLB's header gives another length than the file has");
+  const length = view.getUint32(12, true);
+  if (view.getUint32(16, true) !== JSON_CHUNK || 20 + length > size) throw new Refused("not-glb", "The GLB has no JSON chunk first");
+  let json: unknown;
+  try {
+    json = JSON.parse(new TextDecoder().decode(read(20, length)));
+  } catch {
+    throw new Refused("not-glb", "The GLB's JSON does not parse");
+  }
+  if (!isObject(json)) throw new Refused("not-glb", "The GLB's JSON is not an object");
+  return json;
+}
+
+/** Whether a glTF takes a buffer or a picture from an address (`uri`) of its own, outside its file. */
+const external = (json: Json) => [...listed(json.buffers), ...listed(json.images)].some((part) => isObject(part) && "uri" in part);
+
+/**
+ * Whether a file is a VRM Animation (`.vrma`, the `VRMC_vrm_animation` extension) this extension can play over its own
+ * motion: a GLB (as `checkVrm` checks one), which says it is one and maps humanoid bones to its nodes, with an
+ * animation, and takes nothing from outside its file. Throws a `Refused`: `not-glb`, then `not-vrma` for a GLB that is
+ * not one, then `external`. What it animates beyond the bones (expressions, where the eyes look) is not played.
+ */
+export function checkVrma(read: (position: number, length: number) => Uint8Array, size: number): void {
+  const json = glbJson(read, size);
+  const own = isObject(json.extensions) ? json.extensions.VRMC_vrm_animation : undefined;
+  const bones = isObject(own) && isObject(own.humanoid) ? own.humanoid.humanBones : undefined;
+  if (!listed(json.extensionsUsed).includes("VRMC_vrm_animation") || !isObject(bones) || listed(json.animations).length === 0) {
+    throw new Refused("not-vrma", "The file is not a VRM Animation");
+  }
+  if (external(json)) throw new Refused("external", "The animation loads parts of itself from outside its file");
 }
 
 /** A model's name: its own where it gives one, else the uploaded file's name without `.vrm`, else "Model"; at most NAME_MAX characters. */

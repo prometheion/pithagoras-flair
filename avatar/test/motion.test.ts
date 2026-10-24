@@ -16,20 +16,23 @@ function seeded(seed: number) {
 }
 
 /**
- * Runs `motion` for `seconds` at `fps` in `mode`, the reply at `output`, with what is `set` on the model over its
- * defaults, and gives every pose with its time.
+ * Runs `motion` for `seconds` at `fps` in `mode`, the person heard at `input` and the reply at `output`, with what is
+ * `set` on the model over its defaults and the gesture `clips` it has, and gives every pose with its time.
  */
 function run(
   motion: ReturnType<typeof createMotion>,
   seconds: number,
-  { fps = 60, mode = "idle" as AvatarMode, output = 0, reduced = false, set = {} as Partial<ModelSettings> } = {},
+  { fps = 60, mode = "idle" as AvatarMode, input = 0, output = 0, reduced = false, set = {} as Partial<ModelSettings>, clips = {} } = {},
 ) {
   const poses: { t: number; pose: Pose }[] = [];
   const dt = 1 / fps;
   const settings = { ...DEFAULT_SETTINGS, ...set };
-  for (let i = 1; i <= Math.round(seconds * fps); i++) poses.push({ t: i * dt, pose: motion.step({ mode, output, dt, reduced, settings }) });
+  for (let i = 1; i <= Math.round(seconds * fps); i++) poses.push({ t: i * dt, pose: motion.step({ mode, input, output, dt, reduced, settings, clips }) });
   return poses;
 }
+
+/** How open the mouth is, whatever its shape: the widest of the five. */
+const opened = (pose: Pose) => Math.max(pose.expressions.aa, pose.expressions.ih, pose.expressions.ou, pose.expressions.ee, pose.expressions.oh);
 
 /** When each blink starts: the first step its eyes begin to shut. */
 const blinkStarts = (poses: { t: number; pose: Pose }[]) =>
@@ -51,19 +54,23 @@ test("it blinks every 2 to 6 seconds, each blink 0.15 s, and some are doubled", 
   assert.equal(poses.find((p) => p.t >= starts[0] + BLINK + 0.006)!.pose.expressions.blink, 0);
 });
 
-test("the mouth opens with the reply within 60 ms, shuts within 200 ms, and stays shut unless the reply is played", () => {
+test("with mouth shapes off, the mouth opens with the reply within 60 ms, shuts within 200 ms, and stays shut unless the reply is played", () => {
+  const set = { mouthShapes: false };
   const motion = createMotion(seeded(1));
-  const open = run(motion, 0.06, { fps: 200, mode: "output", output: 0.5 });
+  const open = run(motion, 0.06, { fps: 200, mode: "output", output: 0.5, set });
   assert.ok(open.at(-1)!.pose.expressions.aa >= 0.9 * 0.8, `open to ${open.at(-1)!.pose.expressions.aa} of 0.8`);
   assert.ok(Math.abs(open.at(-1)!.pose.expressions.oh - 0.25 * open.at(-1)!.pose.expressions.aa) < 1e-9, "rounded a quarter as much");
-  run(motion, 1, { mode: "output", output: 0.5 });
-  const shut = run(motion, 0.2, { fps: 200, mode: "output", output: 0 });
+  assert.deepEqual([open.at(-1)!.pose.expressions.ih, open.at(-1)!.pose.expressions.ou, open.at(-1)!.pose.expressions.ee], [0, 0, 0], "no other shape");
+  run(motion, 1, { mode: "output", output: 0.5, set });
+  const shut = run(motion, 0.2, { fps: 200, mode: "output", output: 0, set });
   assert.ok(shut.at(-1)!.pose.expressions.aa <= 0.1 * 0.8, `shut to ${shut.at(-1)!.pose.expressions.aa}`);
   for (const mode of ["idle", "input", "thinking", "muted"] as AvatarMode[]) {
-    const poses = run(createMotion(seeded(2)), 1, { mode, output: 0.9 });
-    assert.equal(Math.max(...poses.map((p) => p.pose.expressions.aa)), 0, `shut while ${mode}`);
+    for (const mouthShapes of [false, true]) {
+      const poses = run(createMotion(seeded(2)), 1, { mode, input: 0.9, output: 0.9, set: { mouthShapes } });
+      assert.equal(Math.max(...poses.map((p) => opened(p.pose))), 0, `shut while ${mode}`);
+    }
   }
-  assert.equal(run(createMotion(seeded(3)), 1, { mode: "output", output: 1 }).at(-1)!.pose.expressions.aa > 0.99, true, "wide open at most");
+  assert.equal(run(createMotion(seeded(3)), 1, { mode: "output", output: 1, set }).at(-1)!.pose.expressions.aa > 0.99, true, "wide open at most");
 });
 
 test("it leans in only while the person is heard, and is drawn 8% nearer then", () => {
@@ -139,7 +146,7 @@ const MODES: AvatarMode[] = ["idle", "input", "output", "thinking", "muted"];
 const settle = (seconds: number, options: Parameters<typeof run>[2]) => run(createMotion(() => 0.5), seconds, options).at(-1)!.pose;
 
 test("the mouth opens as wide as its sensitivity says for the same loudness", () => {
-  const open = (mouth: number, output: number) => settle(1, { mode: "output", output, set: { mouth } }).expressions.aa;
+  const open = (mouth: number, output: number) => settle(1, { mode: "output", output, set: { mouth, mouthShapes: false } }).expressions.aa;
   assert.ok(Math.abs(open(2, 0.2) - 0.64) < 0.005, `twice as wide: ${open(2, 0.2)}`);
   assert.ok(Math.abs(open(2, 0.5) - 1) < 0.005, `wide open at most: ${open(2, 0.5)}`);
   assert.ok(Math.abs(open(0.5, 0.5) - 0.4) < 0.005, `half as wide: ${open(0.5, 0.5)}`);
@@ -156,7 +163,7 @@ test("with no motion set it neither breathes, sways, moves its eyes, nods, leans
       assert.equal(pose.near, 0, mode);
     }
     assert.ok(poses.some((p) => p.pose.expressions.blink > 0), `${mode}: it blinks`);
-    if (mode === "output") assert.ok(poses.some((p) => p.pose.expressions.aa > 0.5), "it speaks");
+    if (mode === "output") assert.ok(poses.some((p) => opened(p.pose) > 0.5), "it speaks");
   }
 });
 

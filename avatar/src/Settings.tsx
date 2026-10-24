@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from "react";
 import { flushSync } from "react-dom";
 import type { ApiError } from "@pithagoras/extension-api";
+import type { ClipGesture } from "./gestures";
 import type { Model } from "./model";
 import { withDefaults, type ModelSettings } from "./model-settings";
 import { modelsChanged } from "./models";
@@ -19,7 +20,23 @@ const api = {
   settings: (id: string, settings: Partial<ModelSettings>) =>
     portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/settings`), { method: "PUT", body: JSON.stringify({ settings }) }),
   remove: (id: string) => portal.api.json(portal.api.url(`/models/${id}`), { method: "DELETE" }),
+  clip: (id: string, gesture: ClipGesture, file: File) =>
+    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/clips/${gesture}?name=${encodeURIComponent(file.name)}`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file,
+    }),
+  removeClip: (id: string, gesture: ClipGesture) => portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/clips/${gesture}`), { method: "DELETE" }),
 };
+
+/** What the server refused of a gesture clip, in the page's language by its code; anything else as for a model. */
+function clipRefusal(e: unknown): string {
+  const { code } = (e as Partial<ApiError>).body ?? {};
+  if (code === "not-glb" || code === "not-vrma") return t("This is not a VRM Animation file.");
+  if (code === "too-large") return t("The clip is larger than 4 MB.");
+  if (code === "external") return t("The clip loads parts of itself from outside its file, which this extension does not allow.");
+  return refusal(e);
+}
 
 /** What the server refused, in the page's language by its code; anything else as it was said. */
 function refusal(e: unknown): string {
@@ -176,13 +193,13 @@ export function Settings() {
   if (!models) return <ui.RowsSkeleton rows={2} label={t("Loading…")} />;
 
   // What it did, or false with why it could not over the page.
-  const run = async (work: () => Promise<unknown>) => {
+  const run = async (work: () => Promise<unknown>, said = refusal) => {
     setFailure(undefined);
     try {
       await work();
       return true;
     } catch (e) {
-      setFailure(refusal(e));
+      setFailure(said(e));
       return false;
     }
   };
@@ -358,6 +375,18 @@ export function Settings() {
               await api.settings(previewed.id, settings);
               await reload();
               void paint();
+            })
+          }
+          onClip={(gesture, picked) =>
+            void run(async () => {
+              await api.clip(previewed.id, gesture, picked);
+              await reload();
+            }, clipRefusal)
+          }
+          onRemoveClip={(gesture) =>
+            void run(async () => {
+              await api.removeClip(previewed.id, gesture);
+              await reload();
             })
           }
         />

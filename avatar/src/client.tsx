@@ -28,7 +28,7 @@ export default function flairAvatar(given: Portal) {
         {
           title: msg("Look and motion"),
           section: msg("Look and motion"),
-          words: "zoom height brightness warmth light blink breathing sway lean thinking mouth lip sync arms pose gaze eyes download licence helligkeit wärme licht blinzeln atmen vorbeugen denkpose mund arme blick herunterladen lizenz",
+          words: "zoom height brightness warmth light blink breathing sway lean thinking mouth lip sync shapes arms pose gaze eyes gestures wave nod clip vrma animation download licence helligkeit wärme licht blinzeln atmen vorbeugen denkpose mund mundformen arme blick gesten winken nicken herunterladen lizenz",
         },
       ],
       // Settings draws an extension's page without a Suspense of its own: one fetched later would blank it until then.

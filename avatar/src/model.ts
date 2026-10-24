@@ -1,3 +1,4 @@
+import type { ClipGesture } from "./gestures";
 import type { ModelSettings } from "./model-settings";
 
 /**
@@ -22,7 +23,15 @@ export type Model = {
   portraitStamp?: string;
   /** What is set on it on the Settings page (model-settings.ts): only the values that differ from the defaults. */
   settings?: Partial<ModelSettings>;
+  /**
+   * The gesture clips uploaded for it on the Settings page, each a VRM Animation played in place of the gesture's own
+   * motion (gestures.ts): none for a gesture that has its own.
+   */
+  clips?: Partial<Record<ClipGesture, ClipFile>>;
 } & ModelSpec;
+
+/** A gesture clip as the model's record keeps it: the uploaded file's name, its size in bytes and its sha256 in hex. */
+export type ClipFile = { name: string; size: number; sha256: string };
 
 /** The VRM version a model is made in, and what it says of its own licence under the names that version gives them. */
 export type ModelSpec = { spec: "1.0"; licence: Vrm1Licence } | { spec: "0.x"; licence: Vrm0Licence };

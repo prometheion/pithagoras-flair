@@ -8,9 +8,10 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import express from "express";
-import flairAvatar, { UPLOAD_MAX } from "../src/server.ts";
+import flairAvatar, { CLIP_MAX, UPLOAD_MAX } from "../src/server.ts";
 import { stubPortal } from "./stub-portal.ts";
 import { tinyVrm0, tinyVrm1 } from "./tiny-vrm.ts";
+import { tinyVrma } from "./tiny-vrma.ts";
 
 /** The server half's routes, as its Settings page and the live avatar use them, on a stand-in for the portal. */
 
@@ -261,9 +262,10 @@ test("settings that are not ones, or out of their range, are refused naming the 
   assert.equal(JSON.parse(readFileSync(path.join(models, `${model.id}.json`), "utf8")).settings, undefined);
 });
 
-test("a model is deleted with its picture and what is kept of it", async () => {
+test("a model is deleted with its picture, its clips and what is kept of it", async () => {
   const { model } = await (await upload(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Gone")))).json();
   assert.equal((await fetch(`${at}/models/${model.id}/portrait?stamp=${STAMP}`, { method: "PUT", body: PNG })).status, 200);
+  for (const gesture of ["greeting", "thinking"]) assert.equal((await clipUp(model.id, gesture, tinyVrma())).status, 200);
   const gone = await fetch(`${at}/models/${model.id}`, { method: "DELETE" });
   assert.deepEqual(await gone.json(), { ok: true });
   assert.deepEqual(readdirSync(models).filter((name) => name.startsWith(model.id)), []);
@@ -280,6 +282,9 @@ test("an id that is not a model's is not found, on every route", async () => {
       [`${where}/portrait?stamp=${STAMP}`, { method: "PUT", body: PNG }],
       [where, { method: "PATCH", headers: { "content-type": "application/json" }, body: '{"name":"x"}' }],
       [`${where}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: '{"settings":{}}' }],
+      [`${where}/clips/greeting`, { method: "PUT", body: tinyVrma() }],
+      [`${where}/clips/greeting`, {}],
+      [`${where}/clips/greeting`, { method: "DELETE" }],
       [where, { method: "DELETE" }],
     ] as [string, RequestInit][]) {
       const answer = await fetch(url, init);
@@ -287,6 +292,61 @@ test("an id that is not a model's is not found, on every route", async () => {
       assert.equal((await answer.json()).code, "not-found");
     }
   }
+});
+
+/** A clip uploaded for a model's gesture, as the page uploads one. */
+const clipUp = (id: string, gesture: string, bytes: Uint8Array<ArrayBuffer>, name = "wave.vrma") =>
+  fetch(`${at}/models/${id}/clips/${gesture}?name=${encodeURIComponent(name)}`, { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes });
+
+test("a clip is uploaded for a gesture, listed with the model by its name, size and hash, served for good, replaced and removed", async () => {
+  const { model } = await (await upload(tinyVrm0((json) => (json.extensions.VRM.meta.title = "Clipped")))).json();
+  const wave = tinyVrma();
+  const up = await clipUp(model.id, "greeting", wave, "My wave.vrma");
+  assert.equal(up.status, 200);
+  const file = { name: "My wave.vrma", size: wave.byteLength, sha256: sha256(wave) };
+  assert.deepEqual((await up.json()).model, { ...model, clips: { greeting: file } });
+  assert.deepEqual(JSON.parse(readFileSync(path.join(models, `${model.id}.json`), "utf8")).clips, { greeting: file });
+  const served = await fetch(`${at}/models/${model.id}/clips/greeting?v=${file.sha256}`);
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get("content-type"), "model/gltf-binary");
+  assert.equal(served.headers.get("cache-control"), "private, max-age=31536000, immutable");
+  assert.deepEqual(new Uint8Array(await served.arrayBuffer()), wave);
+  // Another gesture beside it, and the first replaced.
+  const think = tinyVrma((json) => (json.asset.generator = "a think"));
+  assert.equal((await clipUp(model.id, "thinking", think, "think.vrma")).status, 200);
+  const replaced = await (await clipUp(model.id, "greeting", think, "Other.vrma")).json();
+  assert.deepEqual(Object.keys(replaced.model.clips).sort(), ["greeting", "thinking"]);
+  assert.equal(replaced.model.clips.greeting.sha256, sha256(think));
+  // Settings saved later keep the clips.
+  await fetch(`${at}/models/${model.id}/settings`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ settings: { gestures: 0.5 } }) });
+  const removed = await fetch(`${at}/models/${model.id}/clips/greeting`, { method: "DELETE" });
+  const left = (await removed.json()).model;
+  assert.deepEqual(Object.keys(left.clips), ["thinking"]);
+  assert.deepEqual(left.settings, { gestures: 0.5 });
+  assert.equal((await fetch(`${at}/models/${model.id}/clips/greeting`)).status, 404);
+  assert.ok(!readdirSync(models).includes(`${model.id}.greeting.vrma`));
+});
+
+test("a clip that is not a VRM Animation, or over 4 MiB, or for a gesture there is none of, is refused, and nothing is kept", async () => {
+  const { model } = await (await upload(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "Refuses")))).json();
+  for (const [bytes, code] of [
+    [tinyVrm1(), "not-vrma"],
+    [new Uint8Array([1, 2, 3]), "not-glb"],
+    [tinyVrma((json) => (json.buffers[0].uri = "https://example.com/a.bin")), "external"],
+  ] as const) {
+    const answer = await clipUp(model.id, "greeting", bytes as Uint8Array<ArrayBuffer>);
+    assert.equal(answer.status, 400, code);
+    assert.equal((await answer.json()).code, code);
+  }
+  const big = await raw({ method: "PUT", path: `/x/models/${model.id}/clips/greeting`, headers: { "content-length": CLIP_MAX + 1 } }, (req) => req.flushHeaders());
+  assert.equal(big.status, 413);
+  assert.equal(big.body.code, "too-large");
+  const none = await clipUp(model.id, "shrug", tinyVrma());
+  assert.equal(none.status, 404);
+  assert.equal((await none.json()).code, "not-found");
+  assert.equal((await fetch(`${at}/models/${model.id}/clips/__proto__`)).status, 404);
+  assert.equal(JSON.parse(readFileSync(path.join(models, `${model.id}.json`), "utf8")).clips, undefined);
+  assert.deepEqual(readdirSync(models).filter((name) => name.endsWith(".vrma") && name.startsWith(model.id)), []);
 });
 
 test("a part file an upload cut off by a restart left is removed as the server half starts, and one being written is not", () => {

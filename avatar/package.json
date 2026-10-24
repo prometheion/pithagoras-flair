@@ -39,6 +39,7 @@
   "devDependencies": {
     "@pithagoras/extension-api": "^0.2.0",
     "@pixiv/three-vrm": "3.5.5",
+    "@pixiv/three-vrm-animation": "3.5.5",
     "@playwright/test": "1.63.0",
     "@types/express": "5.0.6",
     "@types/node": "22.20.1",

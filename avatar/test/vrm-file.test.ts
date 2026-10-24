@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkVrm, COMPRESSIONS, modelName, Refused, REQUIRED_BONES } from "../src/vrm-file.ts";
+import { checkVrm, checkVrma, COMPRESSIONS, modelName, Refused, REQUIRED_BONES } from "../src/vrm-file.ts";
 import { glb, tinyVrm0, tinyVrm1, vrm1Json } from "./tiny-vrm.ts";
+import { tinyVrma } from "./tiny-vrma.ts";
 
 /** What an upload is checked for before it is kept, and what is kept of a model's meta: its name and its licence. */
 
@@ -139,4 +140,29 @@ test("a model is named by its own name, else the file's without .vrm, else Model
   assert.equal(modelName("é".repeat(100), undefined), "é".repeat(80));
   assert.equal(check(tinyVrm1((json) => (json.extensions.VRMC_vrm.meta.name = "  "))).name, undefined, "a blank name is none");
   assert.equal(vrm1Json().extensions.VRMC_vrm.meta.name, "Tiny");
+});
+
+// A gesture clip.
+
+const clip = (bytes: Uint8Array) => {
+  try {
+    checkVrma((position, length) => bytes.subarray(position, position + length), bytes.byteLength);
+  } catch (e) {
+    assert.ok(e instanceof Refused, `refused as Refused, not ${e}`);
+    return e.code;
+  }
+  return "taken";
+};
+
+test("a VRM Animation is taken as a clip; a model, a GLB that is not one or one that loads from outside its file is not", () => {
+  assert.equal(clip(tinyVrma()), "taken");
+  assert.equal(clip(new Uint8Array(12)), "not-glb");
+  const cut = tinyVrma();
+  assert.equal(clip(cut.subarray(0, cut.byteLength - 4)), "not-glb", "cut short");
+  assert.equal(clip(tinyVrm1()), "not-vrma", "a model");
+  assert.equal(clip(tinyVrma((json) => (json.extensionsUsed = []))), "not-vrma", "not said to be one");
+  assert.equal(clip(tinyVrma((json) => delete json.extensions.VRMC_vrm_animation.humanoid)), "not-vrma", "no bones");
+  assert.equal(clip(tinyVrma((json) => (json.animations = []))), "not-vrma", "no animation");
+  assert.equal(clip(tinyVrma((json) => (json.buffers[0].uri = "https://example.com/motion.bin"))), "external");
+  assert.equal(clip(tinyVrma((json) => (json.images = [{ uri: "/api/whatever.png" }]))), "external");
 });

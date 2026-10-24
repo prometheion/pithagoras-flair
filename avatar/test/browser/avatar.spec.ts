@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { tinyVrm0, tinyVrm1 } from "../tiny-vrm.ts";
+import { tinyVrma } from "../tiny-vrma.ts";
 import { sample } from "./fetch-models.ts";
+import { VIEWER_LEFT, VIEWER_RIGHT, within } from "./frame.ts";
 
 /**
  * The 3D Avatar as voice mode draws it, on the extension's test page: one avatar offered for each model, the model
@@ -465,6 +467,83 @@ test.describe("with real models", () => {
     // Its hair, eyes and skin. Drawn without its textures, it is white and grey: a fifth of a percent of it coloured.
     expect(await coloured(page)).toBeGreaterThan(0.1);
     expect(refused).toEqual([]);
+  });
+
+  test("pixiv's sample model waves its right hand beside its head as voice mode starts, and lowers it", async ({ page, request }) => {
+    const file = sample("twist");
+    test.skip(!file, "the sample model could not be fetched");
+    const [model] = await open(page, request, [readFileSync(file!)]);
+    await mount(page, { entry: model.id, mode: "idle" });
+    await drawn(page);
+    const [before, right] = [await within(page, VIEWER_LEFT), await within(page, VIEWER_RIGHT)];
+    // The software renderer draws a few frames a second, each at most 1/15 s of the motion's time: slowly.
+    await expect.poll(() => within(page, VIEWER_LEFT), { timeout: 30_000, intervals: [200] }).toBeGreaterThan(before + 2000);
+    await expect.poll(() => within(page, VIEWER_LEFT), { timeout: 30_000, intervals: [200] }).toBeLessThan(before + 300);
+    // Its left hand stays down.
+    expect(await within(page, VIEWER_RIGHT)).toBeLessThan(right + 300);
+  });
+
+  test("a clip uploaded is fetched once while the model is drawn and played in place of its gesture; removed, it is dropped at once", async ({ page, request }) => {
+    const file = sample("twist");
+    test.skip(!file, "the sample model could not be fetched");
+    const [model] = await open(page, request, [readFileSync(file!)]);
+    const fetched: string[] = [];
+    page.on("request", (r) => r.url().includes("/clips/") && fetched.push(new URL(r.url()).pathname + new URL(r.url()).search));
+    // Clips that turn the LEFT arm, so they are told from the model's own gestures, made with its right: the wave's
+    // raises it from up to past level, the thinking one holds it up.
+    const leftArm = (json: Record<string, any>) => {
+      json.extensions.VRMC_vrm_animation.humanoid.humanBones = { hips: { node: 0 }, spine: { node: 1 }, leftUpperArm: { node: 2 } };
+      json.nodes[2].translation = [0.15, 0.3, 0];
+    };
+    const put = async (gesture: string, bytes: Uint8Array) => {
+      const up = await request.put(`${API}/models/${model.id}/clips/${gesture}?name=left.vrma`, { data: Buffer.from(bytes), headers: { "content-type": "application/octet-stream" } });
+      expect(up.status()).toBe(200);
+      return (await up.json()).model.clips[gesture].sha256 as string;
+    };
+    // The person speaks first: no wave as it starts.
+    await mount(page, { entry: model.id, mode: "input" });
+    await drawn(page);
+    const [leftBefore, rightBefore] = [await within(page, VIEWER_LEFT), await within(page, VIEWER_RIGHT)];
+    const wave = await put("greeting", tinyVrma(leftArm));
+    await refresh(page);
+    await expect.poll(() => fetched).toEqual([`${API}/models/${model.id}/clips/greeting?v=${wave}`]);
+    // Mounted again: a new stage, which has not heard the person, and waves with the clip as it starts.
+    await mount(page, { entry: model.id, mode: "idle" });
+    await drawn(page);
+    await expect.poll(() => within(page, VIEWER_RIGHT), { timeout: 30_000, intervals: [200] }).toBeGreaterThan(rightBefore + 1000);
+    expect(await within(page, VIEWER_LEFT)).toBeLessThan(leftBefore + 300);
+    // The wave over.
+    await expect.poll(() => within(page, VIEWER_RIGHT), { timeout: 30_000, intervals: [200] }).toBeLessThan(rightBefore + 300);
+
+    // On a long think, the thinking clip; removed while it plays, the model's own hand to the chin at once.
+    const think = await put("thinking", tinyVrma(leftArm, [1.2, 1.2]));
+    await refresh(page);
+    await expect.poll(() => fetched).toContain(`${API}/models/${model.id}/clips/thinking?v=${think}`);
+    await change(page, { mode: "thinking" });
+    await expect.poll(() => within(page, VIEWER_RIGHT), { timeout: 30_000, intervals: [200] }).toBeGreaterThan(rightBefore + 1000);
+    const asked = fetched.length;
+    await request.delete(`${API}/models/${model.id}/clips/thinking`);
+    await refresh(page);
+    await expect.poll(() => within(page, VIEWER_RIGHT), { timeout: 30_000, intervals: [200] }).toBeLessThan(rightBefore + 300);
+    expect(fetched.length).toBe(asked);
+  });
+
+  test("three-vrm-animation's own example clip is read and played with no warning", async ({ page, request }) => {
+    const [file, clip] = [sample("twist"), sample("clip")];
+    test.skip(!file || !clip, "the sample model or clip could not be fetched");
+    const warnings: string[] = [];
+    page.on("console", (m) => (m.type() === "warning" || m.type() === "error") && warnings.push(m.text()));
+    const [model] = await open(page, request, [readFileSync(file!)]);
+    const up = await request.put(`${API}/models/${model.id}/clips/thinking?name=test.vrma`, { data: readFileSync(clip!), headers: { "content-type": "application/octet-stream" } });
+    expect(up.status()).toBe(200);
+    await refresh(page);
+    const fetchedClip = page.waitForResponse((r) => r.url().includes("/clips/thinking"));
+    await mount(page, { entry: model.id, mode: "thinking" });
+    await drawn(page);
+    expect((await fetchedClip).status()).toBe(200);
+    await page.waitForTimeout(4000);
+    expect(Math.max(...(await frames(page, 3)).map((c) => c.pixels))).toBeGreaterThan(0);
+    expect(warnings.filter((w) => /VRM|clip/.test(w))).toEqual([]);
   });
 
   test("Seed-san, whose eyes look by expressions, is drawn", async ({ page, request }) => {
