@@ -362,36 +362,10 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset }: {
   const ids = useId();
   // Read as the page is drawn: the stage reads it once, as it is made.
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const slider = (key: NumberKey, label: string, hint: string) => {
-    const { min, max, step } = RANGES[key];
-    const said = shown(key, settings[key]);
-    return (
-      <label key={key} className="block text-xs text-fg-muted">
-        <span className="flex justify-between gap-3">
-          <span id={`${ids}-${key}-name`}>{t(label)}</span>
-          <span className="tabular-nums text-accent">{said}</span>
-        </span>
-        <input
-          type="range"
-          className="mt-1.5 w-full accent-current"
-          min={min}
-          max={max}
-          step={step}
-          value={settings[key]}
-          // Named by its name alone: its value is said as it is shown, and what it does is its description.
-          aria-labelledby={`${ids}-${key}-name`}
-          aria-valuetext={said}
-          aria-describedby={`${ids}-${key}`}
-          onChange={(e) => onMove({ [key]: Number(e.target.value) })}
-          onPointerUp={onLetGo}
-          onKeyUp={onLetGo}
-          onBlur={onLetGo}
-        />
-        <span id={`${ids}-${key}`} className="mt-0.5 block text-[11px] text-fg-faint">{t(hint)}</span>
-      </label>
-    );
-  };
-  const sliders = (of: Tab) => SLIDERS.filter(([inTab]) => inTab === of).map(([, key, label, hint]) => slider(key, label, hint));
+  const sliders = (of: Tab) =>
+    SLIDERS.filter(([inTab]) => inTab === of).map(([, key, label, hint]) => (
+      <Slider key={key} setting={key} label={label} hint={hint} value={settings[key]} onMove={(value) => onMove({ [key]: value })} onLetGo={onLetGo} />
+    ));
   const gazeHint = GAZE.find(([id]) => id === settings.gaze)![2];
   return (
     <div data-setting={t("Look and motion")}>
@@ -447,5 +421,57 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset }: {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * A setting on a slider, its value shown beside its name and said as it is shown. The value is drawn while the slider
+ * is held (`onMove`, React's onChange, which is the input event) and saved when it is let go (`onLetGo`): on the
+ * input's own change event, which the browser fires once a value is set, whether by a pointer let go, a key, or a
+ * screen reader's gesture to raise or lower it, which moves neither a pointer nor a key nor the focus. React has no
+ * handler for that event of its own.
+ */
+function Slider({ setting, label, hint, value, onMove, onLetGo }: {
+  setting: NumberKey;
+  label: string;
+  hint: string;
+  value: number;
+  onMove: (value: number) => void;
+  onLetGo: () => void;
+}) {
+  const ids = useId();
+  const input = useRef<HTMLInputElement>(null);
+  const letGo = useRef(onLetGo);
+  letGo.current = onLetGo;
+  useEffect(() => {
+    const slider = input.current!;
+    const set = () => letGo.current();
+    slider.addEventListener("change", set);
+    return () => slider.removeEventListener("change", set);
+  }, []);
+  const { min, max, step } = RANGES[setting];
+  const said = shown(setting, value);
+  return (
+    <label className="block text-xs text-fg-muted">
+      <span className="flex justify-between gap-3">
+        <span id={`${ids}-name`}>{t(label)}</span>
+        <span className="tabular-nums text-accent">{said}</span>
+      </span>
+      <input
+        ref={input}
+        type="range"
+        className="mt-1.5 w-full accent-current"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        // Named by its name alone: its value is said as it is shown, and what it does is its description.
+        aria-labelledby={`${ids}-name`}
+        aria-valuetext={said}
+        aria-describedby={`${ids}-hint`}
+        onChange={(e) => onMove(Number(e.target.value))}
+      />
+      <span id={`${ids}-hint`} className="mt-0.5 block text-[11px] text-fg-faint">{t(hint)}</span>
+    </label>
   );
 }

@@ -287,6 +287,36 @@ test("a slider is saved as it is let go, drawn before, and its portrait made aga
   await expect.poll(async () => (await listed(request))[0].settings).toEqual({});
 });
 
+test("a slider set as a screen reader sets it, with no key, pointer or focus, is saved; and dragged with the mouse, once as it is let go", async ({ page, request }) => {
+  await open(page, request);
+  await addOne(page, Buffer.from(tinyVrm1()));
+  const sent: Request[] = [];
+  page.on("request", (r) => isSettings(r) && sent.push(r));
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  // The value set as the input's own setter sets it, then its input and change events, as a screen reader's gesture does.
+  await zoom.evaluate((slider: HTMLInputElement) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "1.3");
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.30×");
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.3 });
+  expect(sent).toHaveLength(1);
+  expect(await zoom.evaluate((slider) => slider === document.activeElement)).toBe(false);
+
+  // Held and moved, then let go: drawn as it moves, saved once.
+  const box = (await page.getByRole("slider", { name: "Height" }).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.75, box.y + box.height / 2, { steps: 5 });
+  await page.mouse.move(box.x + box.width, box.y + box.height / 2, { steps: 5 });
+  await expect(page.getByRole("slider", { name: "Height" })).toHaveAttribute("aria-valuetext", "+10 cm");
+  expect(sent).toHaveLength(1);
+  await page.mouse.up();
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.3, height: 0.1 });
+  expect(sent).toHaveLength(2);
+});
+
 test("each slider says its value as it is shown, and the switch and the choices save at once", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
