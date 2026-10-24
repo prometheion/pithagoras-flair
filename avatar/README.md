@@ -28,7 +28,7 @@ Each model you add is a choice of its own in every agent's Avatar dialog, so two
 
 ## Changing how a model looks and moves
 
-Beside the preview, in three tabs, is what can be set on the model. It is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again. **Reset to defaults** puts all of it back.
+Beside the preview, in three tabs, is what can be set on the model. It is kept with the model, so every agent that has the model looks the same, and applies wherever the model is drawn (the preview, voice mode, each agent's Avatar dialog) as soon as a slider is let go, without the model being loaded again: in the portal's other tabs and windows in the same browser too, and in another browser or device the next time its page is shown. **Reset to defaults** puts all of it back.
 
 | Tab | Setting | What it does | Range |
 | --- | --- | --- | --- |

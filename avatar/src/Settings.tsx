@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type DragEvent } from "react"
 import type { ApiError } from "@pithagoras/extension-api";
 import type { Model } from "./model";
 import { withDefaults, type ModelSettings } from "./model-settings";
-import { refreshModels } from "./models";
+import { modelsChanged } from "./models";
 import { msg, portal, t } from "./portal";
 import { makePortrait, portraitStamp } from "./stage";
 import { Studio } from "./Studio";
@@ -96,7 +96,7 @@ export function Settings() {
   const painting = useRef(false);
   const failed = useRef(new Set<string>());
 
-  // The list again, and the entries offered as avatars with it.
+  // The list again after a change, and the entries offered as avatars with it, here and on the portal's other pages.
   const reload = useCallback(async () => {
     const mine = ++asked.current;
     const listed = await api.list();
@@ -104,7 +104,7 @@ export function Settings() {
       latest.current = listed;
       setModels(listed);
     }
-    void refreshModels();
+    void modelsChanged();
   }, []);
   const paint = useCallback(async () => {
     if (painting.current) return;

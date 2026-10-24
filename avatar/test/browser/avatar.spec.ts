@@ -292,6 +292,30 @@ test("what is set on a model reaches its avatar already drawn, in its next frame
   expect((await counted(page)).context).toBe(1);
 });
 
+test("what is set on the Settings page in another tab reaches the avatar drawn here at once, this page never hidden", async ({ page, context, request }) => {
+  const [model] = await open(page, request);
+  await mount(page, { entry: model.id });
+  await drawn(page);
+  await page.evaluate(() => {
+    (window as any).shownAgain = 0;
+    document.addEventListener("visibilitychange", () => (window as any).shownAgain++);
+  });
+  const pixels = async () => median((await frames(page, 3)).map((c) => c.pixels));
+  const before = await pixels();
+  const settings = await context.newPage();
+  await settings.goto("/");
+  await settings.waitForFunction(() => (window as any).harness?.ready);
+  await settings.evaluate(() => (window as any).harness.settings());
+  const zoom = settings.getByRole("slider", { name: "Zoom" });
+  await zoom.focus();
+  for (let i = 0; i < 10; i++) await zoom.press("ArrowRight");
+  await expect.poll(async () => (await (await request.get(`${API}/models`)).json()).models[0].settings).toEqual({ zoom: 1.5 });
+  // 1.5 times as near, as when it is set on this page.
+  await expect.poll(async () => (await pixels()) / before, { timeout: 3000 }).toBeGreaterThan(1.6);
+  expect(await page.evaluate(() => (window as any).shownAgain)).toBe(0);
+  expect((await counted(page)).context).toBe(1);
+});
+
 test("an entry is registered again for a rename, and not for new settings or a new portrait", async ({ page, request }) => {
   const [model] = await open(page, request);
   await page.evaluate(() => ((window as any).before = (window as any).harness.registered()));

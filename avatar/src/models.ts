@@ -13,7 +13,9 @@ import { Still } from "./Still";
  *
  * What an entry draws is read from the latest list by its id, not kept from the list it was registered with: a new
  * portrait or new settings reach every avatar of the model already drawn, which draws again with them, and the live
- * one takes them in its next frame with no new drawing context.
+ * one takes them in its next frame with no new drawing context. A change made on the Settings page is told to the
+ * portal's other pages open in this browser (`modelsChanged`), which read the list again at once, so an avatar drawn
+ * in another tab or window takes it as one on the same page does.
  */
 
 /** What is registered for each model, by its id: under what name, and what takes it out. */
@@ -25,6 +27,8 @@ const listeners = new Set<() => void>();
 let asked = 0;
 let warned = false;
 let stopped = false;
+/** Where the pages of the portal open in this browser say that the models changed, while the models are offered. */
+let changes: BroadcastChannel | undefined;
 let Live: LazyExoticComponent<typeof LiveAvatar> | undefined;
 
 const subscribe = (listener: () => void) => {
@@ -52,7 +56,7 @@ function avatarOf(id: string): ComponentType<AvatarProps> {
 /**
  * Asks the server half for its models, and registers and takes out entries to match: one renamed is taken out and
  * registered again, as the portal keeps an entry as it was registered. The first list is registered as the server
- * sorts it, by name; models added later come after. Settings calls this after each change.
+ * sorts it, by name; models added later come after. Settings calls it after each change, through `modelsChanged`.
  */
 export async function refreshModels(): Promise<void> {
   const mine = ++asked;
@@ -82,18 +86,34 @@ export async function refreshModels(): Promise<void> {
   }
 }
 
-/** Offers the models now, again whenever the page is shown after being hidden, until `stop`. */
+/**
+ * After a change made on this page (Settings): the list here read again, and the portal's other pages open in this
+ * browser told to read it too. What is said is only that something changed: each page reads the list from the server.
+ */
+export function modelsChanged(): Promise<void> {
+  changes?.postMessage("changed");
+  return refreshModels();
+}
+
+/**
+ * Offers the models now, again whenever another page says they changed and whenever the page is shown after being
+ * hidden, until `stop`.
+ */
 export function offerModels(): { stop(): void } {
   stopped = false;
   const shown = () => {
     if (document.visibilityState === "visible") void refreshModels();
   };
   document.addEventListener("visibilitychange", shown);
+  changes = new BroadcastChannel("@pithagoras/flair-avatar models");
+  changes.onmessage = () => void refreshModels();
   void refreshModels();
   return {
     stop() {
       stopped = true;
       document.removeEventListener("visibilitychange", shown);
+      changes?.close();
+      changes = undefined;
       for (const entry of offered.values()) entry.drop();
       offered.clear();
     },
