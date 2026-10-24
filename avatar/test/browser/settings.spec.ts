@@ -532,6 +532,8 @@ test("the tabs are the portal's: arrows round the ends, Home and End, the tab sh
     { name: "one.vrm", buffer: Buffer.from(tinyVrm1()) },
     { name: "zero.vrm", buffer: Buffer.from(tinyVrm0()) },
   ]);
+  // The last one added is chosen once it is in: its card drawn again would take the focus from a tab.
+  await expect(cards(page).filter({ hasText: "Tiny Zero" })).toHaveAttribute("aria-pressed", "true");
   const list = page.getByRole("tablist", { name: "Look and motion" });
   const tabs = list.getByRole("tab");
   await expect(tabs).toHaveText(["Camera", "Light", "Motion", "Eyes", "Voice", "Arms"]);
