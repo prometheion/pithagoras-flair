@@ -1,8 +1,9 @@
-import { AmbientLight, DirectionalLight, PerspectiveCamera, Scene, TextureLoader, Timer, Vector3, WebGLRenderer } from "three";
+import { AmbientLight, Color, DirectionalLight, PerspectiveCamera, Scene, TextureLoader, Timer, Vector3, WebGLRenderer } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM, type VRMLookAtBoneApplier, type VRMLookAtExpressionApplier } from "@pixiv/three-vrm";
 import type { AvatarLevels, AvatarMode } from "@pithagoras/extension-api";
 import type { Model } from "./model";
+import { withDefaults, type ModelSettings } from "./model-settings";
 import { createMotion, damp, type Bone, type Pose } from "./motion";
 import { portal } from "./portal";
 
@@ -22,24 +23,58 @@ const OVERSCAN = 10 / 7;
 /** From this size of the box up, in CSS pixels, a bust is drawn; below, the face. */
 const BUST_FROM = 160;
 
+/** A bust, from the chest up, or the face: what a box of 160 pixels and more draws, and a smaller one. */
+export type FramingKind = "bust" | "face";
+
 /**
  * Where the camera is and what it looks at, from the head bone's height: a bust, or the face. The bust is the one
  * 1.6 m in front drawn in the box itself: the camera is as much further back as the canvas is larger than the box, so
- * the head the box would cut is drawn whole above it.
+ * the head the box would cut is drawn whole above it. The zoom set on the model divides the distance, and its height
+ * moves the camera and what it looks at down, which draws the model higher in its box.
  */
-type Framing = { y: number; z: number; at: number };
-const bust = (head: number): Framing => ({ y: head - 0.05, z: 1.6 * OVERSCAN, at: head - 0.12 });
-const face = (head: number): Framing => ({ y: head + 0.02, z: 0.75, at: head + 0.02 });
+export type Framing = { y: number; z: number; at: number };
+export function framed(kind: FramingKind, head: number, { zoom, height }: ModelSettings): Framing {
+  const base = kind === "bust" ? { y: head - 0.05, z: 1.6 * OVERSCAN, at: head - 0.12 } : { y: head + 0.02, z: 0.75, at: head + 0.02 };
+  return { y: base.y - height, z: base.z / zoom, at: base.at - height };
+}
+
+/** The colours the lights are tinted towards, at a warmth of +1 and -1. */
+export const WARM = 0xffd2a1;
+export const COOL = 0xc9dcff;
+const white = new Color(0xffffff);
+const warm = new Color(WARM);
+const cool = new Color(COOL);
+
+/** The lights' colour for a warmth, written into `into`: white, moved that far towards the warm or the cool one. */
+const tinted = (warmth: number, into: Color) => into.copy(white).lerp(warmth > 0 ? warm : cool, Math.abs(warmth));
+
+/**
+ * How the lights are set for what is set on the model: their colour (in three's working colour space) and how strong
+ * the one from above in front (`sun`) and the one all round (`ambient`) are.
+ */
+export function lighting({ brightness, warmth }: ModelSettings): { color: [number, number, number]; sun: number; ambient: number } {
+  const { r, g, b } = tinted(warmth, new Color());
+  return { color: [r, g, b], sun: Math.PI * brightness, ambient: 0.4 * brightness };
+}
+
+/** `lighting`, applied to the lights themselves: in each frame, so it allocates nothing. */
+function light(sun: DirectionalLight, ambient: AmbientLight, { brightness, warmth }: ModelSettings) {
+  tinted(warmth, sun.color);
+  ambient.color.copy(sun.color);
+  sun.intensity = Math.PI * brightness;
+  ambient.intensity = 0.4 * brightness;
+}
 
 /** The lights, as the model is drawn in both: one from above in front, and a little all round. */
-function lit(): { scene: Scene; camera: PerspectiveCamera } {
+function lit(): { scene: Scene; camera: PerspectiveCamera; sun: DirectionalLight; ambient: AmbientLight } {
   const scene = new Scene();
   const sun = new DirectionalLight(0xffffff, Math.PI);
   sun.position.set(0.5, 1.5, 2);
-  scene.add(sun, new AmbientLight(0xffffff, 0.4));
+  const ambient = new AmbientLight(0xffffff, 0.4);
+  scene.add(sun, ambient);
   const camera = new PerspectiveCamera(22, 1, 0.1, 20);
   scene.add(camera);
-  return { scene, camera };
+  return { scene, camera, sun, ambient };
 }
 
 const at = new Vector3();
@@ -116,9 +151,12 @@ export function pose(vrm: VRM, { expressions, bones }: Pose) {
   for (const [name, [x, y, z]] of Object.entries(bones)) vrm.humanoid.getNormalizedBoneNode(name as Bone)?.rotation.set(turned * x, y, turned * z);
 }
 
-/** The model at rest, arms down, eyes open and mouth shut, as both start: and the height of its head bone then. */
-export function rest(vrm: VRM): number {
-  pose(vrm, createMotion(() => 0.5).step({ mode: "idle", output: 0, dt: 0, reduced: true }));
+/**
+ * The model at rest, arms down by the angle set on it, eyes open and mouth shut, as both start: and the height of its
+ * head bone then.
+ */
+export function rest(vrm: VRM, settings: ModelSettings): number {
+  pose(vrm, createMotion(() => 0.5).step({ mode: "idle", output: 0, dt: 0, reduced: true, settings }));
   vrm.update(0);
   vrm.scene.updateMatrixWorld(true);
   return vrm.humanoid.getRawBoneNode("head")!.getWorldPosition(new Vector3()).y;
@@ -137,12 +175,17 @@ function look(camera: PerspectiveCamera, { y, z, at }: Framing) {
  * from a bust to the face as the box crosses 160 pixels. The frame rate is the display's, at most 60, from 160 pixels
  * up, 30 below and 15 when the system asks for less motion, and nothing is drawn while the box is out of view.
  *
- * `mode` and `levels` are read in each frame, never kept. `shown` is told what is shown as it changes.
+ * `mode`, `levels` and `settings` (what is set on the model, model-settings.ts) are read in each frame, never kept: a
+ * new zoom or height is eased to as the change of framing is, and the lights and the motion follow at once. `framing`,
+ * where it says one, is drawn whatever the size (the Settings page's preview shows either). `shown` is told what is
+ * shown as it changes.
  */
-export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
+export function createStage(host: HTMLElement, { model, levels, mode, settings, framing: kindOf, shown }: {
   model: Model;
   levels: { readonly current: AvatarLevels };
   mode: () => AvatarMode;
+  settings: () => ModelSettings;
+  framing?: () => FramingKind | undefined;
   shown: (shown: Shown) => void;
 }): () => void {
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -157,7 +200,7 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
   const canvas = renderer.domElement;
   const gl = renderer.getContext();
   host.appendChild(canvas);
-  const { scene, camera } = lit();
+  const { scene, camera, sun, ambient } = lit();
   const motion = createMotion();
   const timer = new Timer();
   // A page in the background piles up no time to catch up on.
@@ -190,15 +233,18 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
     if (size !== drawnAt) {
       renderer.setSize(size * OVERSCAN, size * OVERSCAN, false);
       drawnAt = size;
-      host.dataset.framing = size < BUST_FROM ? "face" : "bust";
     }
-    const goal = size < BUST_FROM ? face(head) : bust(head);
+    const set = settings();
+    const kind = kindOf?.() ?? (size < BUST_FROM ? "face" : "bust");
+    if (host.dataset.framing !== kind) host.dataset.framing = kind;
+    const goal = framed(kind, head, set);
     framing = framing
       ? { y: damp(framing.y, goal.y, 6, dt), z: damp(framing.z, goal.z, 6, dt), at: damp(framing.at, goal.at, 6, dt) }
       : goal;
     // Hair and clothes would jump after a pause (the box out of view): they start again from where they hang.
     if (gap > 500) vrm.springBoneManager?.reset();
-    const moved = motion.step({ mode: mode(), output: levels.current.output, dt, reduced });
+    light(sun, ambient, set);
+    const moved = motion.step({ mode: mode(), output: levels.current.output, dt, reduced, settings: set });
     look(camera, { ...framing, z: framing.z * (1 - moved.near) });
     pose(vrm, moved);
     aim(vrm, camera, moved.gaze);
@@ -227,10 +273,10 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
     try {
       const loaded = await loadModel(model, loading.signal);
       if (loading.signal.aborted) return VRMUtils.deepDispose(loaded.scene);
-      head = rest(loaded);
+      head = rest(loaded, settings());
       scene.add(loaded.scene);
       vrm = loaded;
-      look(camera, bust(head));
+      look(camera, framed("bust", head, settings()));
       // Every shader compiled now, off the frames: the first frame would stall the page otherwise.
       await renderer.compileAsync(scene, camera);
       if (!loading.signal.aborted) run();
@@ -258,8 +304,9 @@ export function createStage(host: HTMLElement, { model, levels, mode, shown }: {
 
 /**
  * A picture of a model, for a `still` avatar: 256 pixels square, framed as the face is in a small box (and so over the
- * same overscanned square), at rest with its eyes open, its mouth shut and looking at the camera. Made once, by the
- * Settings page, with a drawing context of its own that is given back at once.
+ * same overscanned square), at rest with its eyes open, its mouth shut and looking at the camera, with what is set on
+ * the model for its framing, its lights and its arms. Made by the Settings page, with a drawing context of its own that
+ * is given back at once.
  */
 export async function makePortrait(model: Model): Promise<Blob> {
   const canvas = document.createElement("canvas");
@@ -268,10 +315,12 @@ export async function makePortrait(model: Model): Promise<Blob> {
   renderer.setSize(256, 256, false);
   let vrm: VRM | undefined;
   try {
-    const { scene, camera } = lit();
+    const set = withDefaults(model.settings);
+    const { scene, camera, sun, ambient } = lit();
+    light(sun, ambient, set);
     vrm = await loadModel(model, new AbortController().signal);
-    const head = rest(vrm);
-    look(camera, face(head));
+    const head = rest(vrm, set);
+    look(camera, framed("face", head, set));
     scene.add(vrm.scene);
     aim(vrm, camera, [0, 0]);
     vrm.update(0);

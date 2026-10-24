@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Euler, MathUtils, PerspectiveCamera, Quaternion, Vector3 } from "three";
+import { Color, Euler, MathUtils, PerspectiveCamera, Quaternion, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
+import { DEFAULT_SETTINGS, type ModelSettings } from "../src/model-settings.ts";
 import { createMotion, type MotionInput } from "../src/motion.ts";
-import { aim, pose, rest } from "../src/stage.ts";
+import { aim, COOL, framed, lighting, pose, rest, WARM } from "../src/stage.ts";
 import { tinyVrm0, tinyVrm1 } from "./tiny-vrm.ts";
 
 /**
@@ -12,7 +13,8 @@ import { tinyVrm0, tinyVrm1 } from "./tiny-vrm.ts";
  * stage reads a model, with its eyes looking by their bones or by expressions, under the range maps pixiv's and
  * VirtualCast's samples have (a quarter turn to the target for the eyes' furthest: 10° of the bone, or the expression
  * at its full). And how it poses a model (`pose`), measured on where its bones are: the tiny VRM 1.0 model and its VRM
- * 0.x copy, which is the same model facing the other way in its own axes. No WebGL: nothing is drawn.
+ * 0.x copy, which is the same model facing the other way in its own axes. And where the camera is and how the lights are
+ * set for what is set on a model. No WebGL: nothing is drawn.
  */
 
 const ranges = (outputScale: number) =>
@@ -100,12 +102,13 @@ type Seen = Record<string, Vector3>;
 const SHOWN = ["head", "leftEye", "rightEye", "leftUpperArm", "rightUpperArm", "leftHand", "rightHand", "leftUpperLeg", "rightUpperLeg"] as const;
 
 /**
- * A model read and at rest as the stage has it once loaded: what is seen of it, and a frame of it (the motion's next
- * step posed on it, the eyes aimed and the model updated, as the stage's frame does) and what is seen then.
+ * A model read and at rest as the stage has it once loaded, with `settings` on it: what is seen of it, and a frame of it
+ * (the motion's next step posed on it, the eyes aimed and the model updated, as the stage's frame does) and what is
+ * seen then.
  */
-async function posed(bytes: Uint8Array<ArrayBuffer>) {
+async function posed(bytes: Uint8Array<ArrayBuffer>, settings: ModelSettings = DEFAULT_SETTINGS) {
   const vrm = await read(bytes);
-  rest(vrm);
+  rest(vrm, settings);
   const eye = (name: "leftEye" | "rightEye") => vrm.humanoid.getRawBoneNode(name)!.getWorldQuaternion(new Quaternion());
   const fromRest = { leftEye: eye("leftEye").invert(), rightEye: eye("rightEye").invert() };
   const seen = (): Seen => {
@@ -115,8 +118,8 @@ async function posed(bytes: Uint8Array<ArrayBuffer>) {
   };
   const eyes = camera(vrm);
   const motion = createMotion(() => 0.5);
-  const frame = (input: MotionInput): Seen => {
-    const moved = motion.step(input);
+  const frame = (input: Omit<MotionInput, "settings">): Seen => {
+    const moved = motion.step({ ...input, settings });
     pose(vrm, moved);
     aim(vrm, eyes, moved.gaze);
     vrm.update(input.dt);
@@ -127,7 +130,7 @@ async function posed(bytes: Uint8Array<ArrayBuffer>) {
 }
 
 /** `seconds` of frames at 30 a second in `mode`, and what is seen in the last. */
-const run = (frame: (input: MotionInput) => Seen, mode: MotionInput["mode"], seconds: number, output = 0) => {
+const run = (frame: (input: Omit<MotionInput, "settings">) => Seen, mode: MotionInput["mode"], seconds: number, output = 0) => {
   let seen!: Seen;
   for (let i = 0; i < 30 * seconds; i++) seen = frame({ mode, output, dt: 1 / 30, reduced: false });
   return seen;
@@ -168,4 +171,48 @@ test("a VRM 0.x model is posed as a VRM 1.0 one is: its sway, lean, nod, thinkin
   assert.ok(thinking["leftEye looks"].x > 0.1 && thinking["leftEye looks"].y > 0.05, `the left eye looks along ${thinking["leftEye looks"].toArray()}`);
   // Its top to the viewer's left: the eye on the viewer's right, the model's left, higher.
   assert.ok(thinking.leftEye.y - thinking.rightEye.y > 0.005, `the left eye ${thinking.leftEye.y.toFixed(4)} m high, the right ${thinking.rightEye.y.toFixed(4)} m`);
+});
+
+test("at a smaller arm angle the hands are higher, still outside the hips, on a VRM 0.x model as on a VRM 1.0 one", async () => {
+  const raised = { ...DEFAULT_SETTINGS, armDown: 1 };
+  for (const [version, bytes] of [["VRM 1.0", tinyVrm1], ["VRM 0.x", tinyVrm0]] as const) {
+    const [usual, set] = [(await posed(bytes())).seen(), (await posed(bytes(), raised)).seen()];
+    for (const [side, outwards] of [["left", 1], ["right", -1]] as const) {
+      const [hand, hip] = [set[`${side}Hand`], set[`${side}UpperLeg`]];
+      // The tiny model's arm is 0.5 m long: 0.2 rad less is 4 cm higher at the hand.
+      assert.ok(hand.y > usual[`${side}Hand`].y + 0.03, `${version}: the ${side} hand at ${hand.y.toFixed(3)} m, at the usual angle ${usual[`${side}Hand`].y.toFixed(3)} m`);
+      assert.ok(outwards * hand.x > outwards * hip.x, `${version}: the ${side} hand ${hand.x.toFixed(3)} m across, the hip ${hip.x.toFixed(3)} m`);
+    }
+  }
+  same((await posed(tinyVrm0(), raised)).seen(), (await posed(tinyVrm1(), raised)).seen(), "at rest");
+});
+
+test("the camera is where it was at the defaults, nearer by the zoom, and lower by the height in both framings", () => {
+  const at = (kind: "bust" | "face", set: Partial<ModelSettings> = {}) => framed(kind, 1.4, { ...DEFAULT_SETTINGS, ...set });
+  const bust = at("bust");
+  near(bust.y, 1.35, 1e-9, "the bust's camera height");
+  near(bust.z, (1.6 * 10) / 7, 1e-9, "the bust's distance");
+  near(bust.at, 1.28, 1e-9, "where the bust's camera looks");
+  assert.deepEqual(at("face"), { y: 1.42, z: 0.75, at: 1.42 });
+  for (const kind of ["bust", "face"] as const) {
+    const usual = at(kind);
+    near(at(kind, { zoom: 2 }).z, usual.z / 2, 1e-9, `${kind} at a zoom of 2`);
+    const higher = at(kind, { height: 0.05 });
+    near(higher.y, usual.y - 0.05, 1e-9, `${kind}: the camera, 5 cm higher`);
+    near(higher.at, usual.at - 0.05, 1e-9, `${kind}: what it looks at, 5 cm higher`);
+    assert.equal(higher.z, usual.z);
+  }
+});
+
+test("the lights are white at their usual strength at the defaults, stronger with the brightness, and tinted by the warmth", () => {
+  const set = (given: Partial<ModelSettings>) => lighting({ ...DEFAULT_SETTINGS, ...given });
+  assert.deepEqual(set({}), { color: [1, 1, 1], sun: Math.PI, ambient: 0.4 });
+  const bright = set({ brightness: 1.5 });
+  near(bright.sun, 1.5 * Math.PI, 1e-9, "the sun");
+  near(bright.ambient, 0.6, 1e-9, "all round");
+  const colour = (hex: number) => new Color(hex).toArray() as number[];
+  set({ warmth: 1 }).color.forEach((c, i) => near(c, colour(WARM)[i], 1e-9, `warm, channel ${i}`));
+  set({ warmth: -1 }).color.forEach((c, i) => near(c, colour(COOL)[i], 1e-9, `cool, channel ${i}`));
+  set({ warmth: 0.5 }).color.forEach((c, i) => near(c, (1 + colour(WARM)[i]) / 2, 1e-9, `halfway, channel ${i}`));
+  set({ warmth: -0.5 }).color.forEach((c, i) => near(c, (1 + colour(COOL)[i]) / 2, 1e-9, `halfway, channel ${i}`));
 });
