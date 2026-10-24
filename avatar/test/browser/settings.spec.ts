@@ -416,6 +416,33 @@ test("a key pressed while a save's list waits behind a portrait's steps from wha
   await expect(zoom).toHaveAttribute("aria-valuetext", "1.10×");
 });
 
+test("a change waiting behind a save on its way is sent as the page is closed, and again after that save while the page lives on", async ({ page, request }) => {
+  await open(page, request);
+  await addOne(page, Buffer.from(tinyVrm1()));
+  // The first save is held, so the next key's change waits behind it.
+  let first: Route | undefined;
+  await page.route((url) => url.pathname.endsWith("/settings"), (route) => {
+    if (!first) first = route;
+    else void route.continue();
+  });
+  const sent: unknown[] = [];
+  page.on("request", (r) => isSettings(r) && sent.push(r.postDataJSON().settings));
+  const zoom = page.getByRole("slider", { name: "Zoom" });
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.00×");
+  await zoom.focus();
+  await zoom.press("ArrowRight");
+  await expect.poll(() => first).toBeDefined();
+  await zoom.press("ArrowRight");
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.10×");
+  expect(sent).toEqual([{ zoom: 1.05 }]);
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
+  await expect.poll(() => sent).toEqual([{ zoom: 1.05 }, { zoom: 1.1 }]);
+  await first!.continue();
+  await expect.poll(() => sent).toEqual([{ zoom: 1.05 }, { zoom: 1.1 }, { zoom: 1.1 }]);
+  await expect.poll(async () => (await listed(request))[0].settings).toEqual({ zoom: 1.1 });
+  await expect(zoom).toHaveAttribute("aria-valuetext", "1.10×");
+});
+
 test("each tab has its own settings in the one panel, each slider says its value as it is shown, a tab with any set apart from its default has a dot that says so, and the switch and the choices save at once", async ({ page, request }) => {
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));

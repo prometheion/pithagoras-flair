@@ -169,7 +169,7 @@ const UNDO = icon(<path d="M9 14 4 9l5-5M4 9h11a5 5 0 0 1 0 10h-3" />);
 const PLAY = icon(<path d="M8 5v14l11-7z" />);
 const STOP = icon(<path d="M7 7h10v10H7z" />);
 
-export function Studio({ model, tab, onTab, onRename, onDelete, onSave, previewRef }: {
+export function Studio({ model, tab, onTab, onRename, onDelete, onSave, onLeave, previewRef }: {
   model: Model;
   /** The tab shown, which the page keeps as another model is chosen. */
   tab: Group;
@@ -178,6 +178,8 @@ export function Studio({ model, tab, onTab, onRename, onDelete, onSave, previewR
   onDelete: () => void;
   /** Saves what differs from the defaults: false when it was refused, which the page says. */
   onSave: (settings: Partial<ModelSettings>) => Promise<boolean>;
+  /** Sends a change still waiting to be saved as the page is closed. */
+  onLeave: (settings: Partial<ModelSettings>) => void;
   /** The preview with its controls, for the page to bring into view when a model is chosen. */
   previewRef?: Ref<HTMLDivElement>;
 }) {
@@ -214,6 +216,13 @@ export function Studio({ model, tab, onTab, onRename, onDelete, onSave, previewR
       sending.current = false;
     }
   };
+  // A change waiting behind a save on its way would go with the page as it is closed, so it is sent then. It stays
+  // waiting too: where the page lives on (one kept for Back), it is sent again after that save, the newest last still.
+  useEffect(() => {
+    const leaving = () => queued.current && onLeave(changed(queued.current));
+    window.addEventListener("pagehide", leaving);
+    return () => window.removeEventListener("pagehide", leaving);
+  }, [onLeave]);
   const hold = (next: ModelSettings) => {
     holding.current = next;
     setHeld(next);

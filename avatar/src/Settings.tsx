@@ -16,8 +16,9 @@ const api = {
   portrait: (id: string, png: Blob, stamp: string) =>
     portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/portrait?stamp=${encodeURIComponent(stamp)}`), { method: "PUT", headers: { "Content-Type": "image/png" }, body: png }),
   rename: (id: string, name: string) => portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}`), { method: "PATCH", body: JSON.stringify({ name }) }),
-  settings: (id: string, settings: Partial<ModelSettings>) =>
-    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/settings`), { method: "PUT", body: JSON.stringify({ settings }) }),
+  // As the page is closed, kept alive past it.
+  settings: (id: string, settings: Partial<ModelSettings>, leaving = false) =>
+    portal.api.json<{ model: Model }>(portal.api.url(`/models/${id}/settings`), { method: "PUT", body: JSON.stringify({ settings }), keepalive: leaving }),
   remove: (id: string) => portal.api.json(portal.api.url(`/models/${id}`), { method: "DELETE" }),
 };
 
@@ -364,6 +365,7 @@ export function Settings() {
               void paint();
             })
           }
+          onLeave={(settings) => void api.settings(previewed.id, settings, true).catch(() => undefined)}
         />
       )}
     </div>
