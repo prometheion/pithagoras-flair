@@ -1,6 +1,6 @@
 {
   "name": "@pithagoras/flair-avatar",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A 3D avatar for Pithagoras voice mode: a VRM model drawn where the orb is, which lip-syncs, blinks, breathes and looks at you",
   "type": "module",
   "keywords": [
