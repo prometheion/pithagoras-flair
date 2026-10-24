@@ -136,8 +136,8 @@ export const de: Record<string, string> = {
     "WebGL 2 ist in diesem Browser nicht verfügbar, darum zeigt der Sprachmodus den Orb.",
   "What the model says of its own licence. It is the author's, not this extension's.":
     "Was das Modell über seine eigene Lizenz sagt. Sie ist die des Autors, nicht die dieser Erweiterung.",
-  "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at half, whatever is set here.":
-    "Dein System verlangt weniger Bewegung: Atmen, Wiegen und Augenbewegungen bleiben aus, Vorbeugen und Denkpose sind halb so stark, was immer hier eingestellt ist.",
+  "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.":
+    "Dein System verlangt weniger Bewegung: Atmen, Wiegen und Augenbewegungen bleiben aus, Vorbeugen und Denkpose sind höchstens halb so stark, was immer hier eingestellt ist.",
   "Zoom": "Zoom",
   "{file}: {reason}": "{file}: {reason}",
 };

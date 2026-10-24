@@ -25,9 +25,9 @@ export interface MotionInput {
   /** Seconds since the last step. */
   dt: number;
   /**
-   * The system asks for less motion. It comes before the settings: what it stops stays stopped and what it halves is
-   * halved whatever is set, so the settings can lower what it allows, never raise it. Blinking and the mouth, which do
-   * not move the body, follow their settings either way.
+   * The system asks for less motion. It comes before the settings: what it stops stays stopped, and what it halves is
+   * at half or less whatever is set, so the settings can lower what it allows, never raise it. Blinking and the mouth,
+   * which do not move the body, follow their settings either way.
    */
   reduced: boolean;
   settings: ModelSettings;
@@ -124,17 +124,18 @@ export function createMotion(random: () => number = Math.random) {
       const since = (t - blinkAt) / BLINK;
       const blink = since >= 0 && since < 1 ? (since < 0.5 ? 2 * since : 2 - 2 * since) : 0;
 
-      // Reduced motion: no breathing, sway, saccades or nodding with the voice; leaning and the thinking pose at half.
-      // Then the settings: all of its own movement, and each kind of it.
+      // Reduced motion: no breathing, sway, saccades or nodding with the voice; leaning and the thinking pose at half
+      // of what the defaults give, and less where the settings lower them, but never more where they would raise them.
+      // Otherwise the settings: all of its own movement, and each kind of it.
       const { motion, breathing } = settings;
       const breath = reduced ? 0 : motion * breathing * Math.sin(1.6 * t);
       const swayX = reduced ? 0 : 0.04 * motion * breathing * Math.sin(0.7 * t);
       const swayY = reduced ? 0 : 0.05 * motion * breathing * Math.sin(0.43 * t);
       const nod = reduced ? 0 : 0.03 * motion * voice;
       const look = reduced ? [0, 0] : [motion * saccade[0], motion * saccade[1]];
-      const half = reduced ? 0.5 : 1;
-      const leaning = lean * half * motion * settings.lean;
-      const pose = think * half * motion;
+      const scaled = (factor: number) => (reduced ? 0.5 * Math.min(1, factor) : factor);
+      const leaning = lean * scaled(motion * settings.lean);
+      const pose = think * scaled(motion);
 
       return {
         expressions: { aa: mouth, oh: 0.25 * mouth, blink },

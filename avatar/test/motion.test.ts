@@ -234,15 +234,20 @@ test("a gaze set to wander moves the eyes further and more slowly while nothing 
   assert.ok(run(createMotion(seeded(11)), 120, { fps: 100 }).every((p) => Math.hypot(...p.pose.gaze) <= 0.2 + 1e-9));
 });
 
-test("reduced motion comes first: more motion set does not bring back breathing, sway or the eyes', and the lean is at half of what is set", () => {
+test("reduced motion comes first: more motion set does not bring back breathing, sway or the eyes', nor lean or turn further than half, and less motion set lowers them", () => {
   const set = { breathing: 2, motion: 1.5 };
   for (const { pose } of run(createMotion(seeded(4)), 10, { reduced: true, set })) {
     assert.deepEqual(pose.bones.chest, [0, 0, 0]);
     assert.deepEqual(pose.bones.head, [0, 0, 0]);
     assert.deepEqual(pose.gaze, [0, 0]);
   }
-  const neck = settle(3, { mode: "input", reduced: true, set: { ...set, lean: 1.2 } }).bones.neck[0];
-  assert.ok(Math.abs(neck - 0.06 * 0.5 * 1.5 * 1.2) < 0.001, `the neck at ${neck}`);
+  // Half of what the defaults give, as with no settings: 0.06 for the neck leaning in, 0.12 for the head turned thinking.
+  const neck = (given: Partial<ModelSettings>) => settle(3, { mode: "input", reduced: true, set: given }).bones.neck[0];
+  const turned = (given: Partial<ModelSettings>) => settle(3, { mode: "thinking", reduced: true, set: given }).bones.head[1];
+  assert.ok(Math.abs(neck({ ...set, lean: 2 }) - 0.06 * 0.5) < 0.001, `the neck at ${neck({ ...set, lean: 2 })}`);
+  assert.ok(Math.abs(turned(set) - 0.12 * 0.5) < 0.001, `the head at ${turned(set)}`);
+  assert.ok(Math.abs(neck({ motion: 0.5, lean: 1.2 }) - 0.06 * 0.5 * 0.5 * 1.2) < 0.001, `the neck at ${neck({ motion: 0.5, lean: 1.2 })}`);
+  assert.ok(Math.abs(turned({ motion: 0.5 }) - 0.12 * 0.5 * 0.5) < 0.001, `the head at ${turned({ motion: 0.5 })}`);
 });
 
 test("with settings of its own it moves the same at 15, 30 and 60 frames a second", () => {

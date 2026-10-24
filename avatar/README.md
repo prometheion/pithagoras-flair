@@ -45,7 +45,7 @@ Beside the preview, in three tabs, is what can be set on the model. It is kept w
 | Voice and pose | Mouth sensitivity | how wide the mouth opens at the same loudness: raise it for a quiet voice | 50% to 200% |
 | | Arm angle | how far the arms come down from the T-pose a VRM model is made in: change it when they go into the body or stand out stiffly | 46° to 83° |
 
-With **reduce motion** set in the system, what it stops stays stopped whatever is set here, and the Motion tab says so.
+With **reduce motion** set in the system, breathing, sway and eye movement stay off and leaning in and the thinking pose are at most half as strong, whatever is set here, and the Motion tab says so.
 
 The picture on the agent's card is made again on this page whenever what shows in it (zoom, height, the lights, the arm angle) changes, and once for every model after an update changes how models are drawn. The Agents page shows the last picture made until the 3D Avatar page in Settings is opened.
 

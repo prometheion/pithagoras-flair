@@ -341,7 +341,7 @@ test("with less motion asked for by the system, the Motion tab says what that le
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page, request);
   await addOne(page, Buffer.from(tinyVrm1()));
-  const note = "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at half, whatever is set here.";
+  const note = "Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.";
   await expect(page.getByText(note)).toHaveCount(0);
   await page.getByRole("tab", { name: "Motion" }).click();
   await expect(page.getByText(note)).toBeVisible();

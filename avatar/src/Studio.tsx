@@ -417,7 +417,7 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset }: {
       <div role="tabpanel" id={`${ids}-panel`} aria-labelledby={`${ids}-tab-${tab}`} className="space-y-4 pt-4">
         {tab === "motion" && reduced && (
           <p className="text-[11px] text-fg-faint">
-            {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at half, whatever is set here.")}
+            {t("Your system asks for less motion: breathing, sway and eye movement stay off, and leaning in and the thinking pose are at most half as strong, whatever is set here.")}
           </p>
         )}
         {sliders(tab)}
