@@ -423,12 +423,9 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
   const gazeHint = GAZE.find(([id]) => id === settings.gaze)![2];
   return (
     <div data-setting={t("Look and motion")}>
-      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
-        <div className="min-w-0 flex-1 basis-48">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{t("Look and motion")}</h4>
-          <p className="mt-0.5 text-xs text-fg-subtle">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <h4 className="text-xs font-semibold uppercase tracking-wider text-fg-subtle">{t("Look and motion")}</h4>
+        <div className="flex items-center gap-2">
           <p role="status" className="text-[11px] text-fg-faint">{onUndo ? t("Back to the defaults.") : ""}</p>
           {/* One button for both, so it keeps the focus as it turns from one into the other. */}
           <button
@@ -442,6 +439,7 @@ function Controls({ settings, onMove, onLetGo, onSet, onReset, onUndo }: {
           </button>
         </div>
       </div>
+      <p className="mt-0.5 text-xs text-fg-subtle">{t("Saved as you change them, for this model wherever it is drawn: here, in voice mode and in each agent's Avatar dialog.")}</p>
       {GROUPS.map(([group, title]) => (
         <div key={group} role="group" aria-labelledby={`${ids}-${group}`} className="mt-4 space-y-4 border-t border-line pt-4">
           <h5 id={`${ids}-${group}`} className="text-xs font-medium text-fg">{t(title)}</h5>
